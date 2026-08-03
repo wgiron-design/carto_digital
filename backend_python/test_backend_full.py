@@ -74,13 +74,47 @@ async def run_full_qa_verification():
             print("[ERROR] Falló la consulta de perfil /me.")
             return False
 
-        print("\n--- PRUEBA 6: Recuperación de Contraseña (Match Username + Email) ---")
+        print("\n--- PRUEBA 6: Recuperación de Contraseña y Página Web ---")
         forgot_resp = await client.post("/api/v1/auth/forgot-password", json={
             "username": test_username,
             "email": test_email
         })
         print(f"HTTP Status: {forgot_resp.status_code}")
         print(f"Mensaje: {forgot_resp.json()}")
+
+        # Verificar que la página HTML de restablecimiento de contraseña carga correctamente
+        page_resp = await client.get("/reset-password-page?token=test_token_sample")
+        print(f"Página HTML /reset-password-page HTTP Status: {page_resp.status_code}")
+        if page_resp.status_code != 200 or "Restablecer Contraseña" not in page_resp.text:
+            print("[ERROR] Falló la carga de la página HTML /reset-password-page.")
+            return False
+        print("[OK] Página Web HTML /reset-password-page renderizada correctamente.")
+
+        # Probar flujo completo de cambio de contraseña mediante token válido
+        from app.security import create_access_token
+        test_reset_token = create_access_token({"sub": str(user_data["id"]), "scope": "reset_password"})
+        new_pwd = "new_password_123"
+
+        reset_resp = await client.post("/api/v1/auth/reset-password", json={
+            "token": test_reset_token,
+            "new_password": new_pwd
+        })
+        print(f"Reset Password API Status: {reset_resp.status_code}")
+        print(f"Body: {reset_resp.json()}")
+        if reset_resp.status_code != 200:
+            print("[ERROR] Falló el endpoint /reset-password.")
+            return False
+
+        # Verificar login con nueva contraseña
+        new_login_resp = await client.post("/api/v1/auth/login", json={
+            "username": test_username,
+            "password": new_pwd
+        })
+        if new_login_resp.status_code == 200:
+            print("[OK] Login con la NUEVA contraseña fue exitoso.")
+        else:
+            print("[ERROR] No se pudo iniciar sesión con la nueva contraseña.")
+            return False
 
         print("\n--- PRUEBA 7: Control de Usuario Inactivo (Mensaje exacto 'usuario inactivo') ---")
         # Desactivar usuario en BD
@@ -89,7 +123,7 @@ async def run_full_qa_verification():
         
         inactive_login_resp = await client.post("/api/v1/auth/login", json={
             "username": test_username,
-            "password": test_password
+            "password": new_pwd
         })
         print(f"HTTP Status: {inactive_login_resp.status_code}")
         detail = inactive_login_resp.json().get("detail", "")
@@ -100,6 +134,7 @@ async def run_full_qa_verification():
         else:
             print(f"[ERROR] Error en regla de usuario inactivo. Se esperaba 'usuario inactivo', se obtuvo: '{detail}'")
             return False
+
 
         # Limpiar registro de prueba
         async with pool.acquire() as conn:

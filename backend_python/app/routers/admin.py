@@ -11,3 +11,8 @@ router = APIRouter(tags=["Admin Web Panel"])
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="admin.html")
+
+@router.get("/reset-password-page", response_class=HTMLResponse)
+async def reset_password_page(request: Request):
+    return templates.TemplateResponse(request=request, name="reset_password.html")
+

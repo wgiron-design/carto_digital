@@ -21,8 +21,10 @@ from app.security import (
     create_access_token,
     get_current_user_claims
 )
+from app.services.email_service import send_reset_password_email
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Autenticación"])
+
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_21_CREATED if hasattr(status, 'HTTP_21_CREATED') else 201)
 async def register(payload: UserRegister, pool: asyncpg.Pool = Depends(get_db_pool)):
@@ -140,13 +142,14 @@ async def forgot_password(payload: ForgotPasswordRequest, pool: asyncpg.Pool = D
                 "sub": str(row['id']),
                 "scope": "reset_password"
             })
-            # Simulación/Registro de despacho de correo electrónico
-            print(f"[AUTH EMAIL SERVICE] Token de recuperación generado para usuario '{row['username']}': {reset_token}")
+            # Despacho de correo electrónico (SMTP o Consola Fallback)
+            await send_reset_password_email(to_email=row['email'], username=row['username'], reset_token=reset_token)
 
         # Mensaje neutro de respuesta por seguridad contra enumeración
         return {
             "message": "Si los datos ingresados coinciden con nuestros registros, se enviarán las instrucciones de recuperación a su correo electrónico."
         }
+
 
 @router.post("/reset-password")
 async def reset_password(payload: ResetPasswordRequest, pool: asyncpg.Pool = Depends(get_db_pool)):
