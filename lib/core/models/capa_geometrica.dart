@@ -88,6 +88,18 @@ class PuntoEstructura {
   final DateTime updatedAt;
   final bool syncDirty;
 
+  // ── Campos de Auditoría y Sincronización Offline ─────────────────────────
+  /// UUID del usuario que creó el registro (nullable — puede no estar autenticado offline)
+  final String? createdBy;
+  /// UUID del último usuario que modificó el registro
+  final String? updatedBy;
+  /// Identificador único del dispositivo móvil que digitalizó
+  final String? deviceId;
+  /// Versión de sincronización para resolución de conflictos offline
+  final int syncVersion;
+  /// Fecha de borrado lógico (soft-delete). Null = registro activo.
+  final DateTime? deletedAt;
+
   // Relación uno-a-muchos con Niveles (se puebla en Paso 4)
   final List<Nivel> niveles;
 
@@ -107,6 +119,11 @@ class PuntoEstructura {
     DateTime? fechaCreacion,
     DateTime? updatedAt,
     this.syncDirty = true,
+    this.createdBy,
+    this.updatedBy,
+    this.deviceId,
+    this.syncVersion = 0,
+    this.deletedAt,
     List<Nivel>? niveles,
   }) : fechaCreacion = fechaCreacion ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now(),
@@ -121,6 +138,8 @@ class PuntoEstructura {
     EstadoEstructura estado = EstadoEstructura.presente,
     int nivelesCantidad = 1,
     String notas = '',
+    String? createdBy,
+    String? deviceId,
   }) {
     return PuntoEstructura(
       id: _uuid.v4(),
@@ -134,8 +153,15 @@ class PuntoEstructura {
       notas: notas,
       niveles: [],
       syncDirty: true,
+      createdBy: createdBy,
+      updatedBy: createdBy,
+      deviceId: deviceId,
+      syncVersion: 0,
     );
   }
+
+  /// True si el registro fue eliminado lógicamente (soft-delete)
+  bool get estaEliminado => deletedAt != null;
 
   /// Retorna la representación geométrica en WKT
   String get geomWkt => 'POINT(${coordenadas.longitude} ${coordenadas.latitude})';
@@ -157,6 +183,11 @@ class PuntoEstructura {
       'niveles_cantidad': nivelesCantidad,
       'updated_at': updatedAt.toIso8601String(),
       'sync_dirty': syncDirty ? 1 : 0,
+      'created_by': createdBy,
+      'updated_by': updatedBy,
+      'device_id': deviceId,
+      'sync_version': syncVersion,
+      'deleted_at': deletedAt?.toIso8601String(),
     };
   }
 
@@ -194,6 +225,11 @@ class PuntoEstructura {
         'fechaCreacion': fechaCreacion.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'syncDirty': syncDirty,
+        'createdBy': createdBy,
+        'updatedBy': updatedBy,
+        'deviceId': deviceId,
+        'syncVersion': syncVersion,
+        'deletedAt': deletedAt?.toIso8601String(),
         'niveles': niveles.map((n) => n.toJson()).toList(),
       };
 
@@ -224,6 +260,11 @@ class PuntoEstructura {
       fechaCreacion: json['fechaCreacion'] != null ? DateTime.parse(json['fechaCreacion'] as String) : DateTime.now(),
       updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt'] as String) : DateTime.now(),
       syncDirty: json['syncDirty'] as bool? ?? true,
+      createdBy: json['createdBy'] as String?,
+      updatedBy: json['updatedBy'] as String?,
+      deviceId: json['deviceId'] as String?,
+      syncVersion: (json['syncVersion'] as num?)?.toInt() ?? 0,
+      deletedAt: json['deletedAt'] != null ? DateTime.parse(json['deletedAt'] as String) : null,
       niveles: (json['niveles'] as List? ?? [])
           .map((n) => Nivel.fromJson(n as Map<String, dynamic>))
           .toList(),
@@ -245,6 +286,10 @@ class PuntoEstructura {
           'estado': estado.name,
           'niveles_cantidad': nivelesCantidad,
           'notas': notas,
+          'created_by': createdBy,
+          'updated_by': updatedBy,
+          'device_id': deviceId,
+          'sync_version': syncVersion,
         }
       };
 
@@ -273,9 +318,13 @@ class PuntoEstructura {
       nivelesCantidad: (props['niveles_cantidad'] as num?)?.toInt() ?? 1,
       notas: props['notas'] as String? ?? '',
       syncDirty: props['sync_dirty'] == true || props['sync_dirty'] == 1,
+      createdBy: props['created_by'] as String?,
+      updatedBy: props['updated_by'] as String?,
+      deviceId: props['device_id'] as String?,
+      syncVersion: (props['sync_version'] as num?)?.toInt() ?? 0,
+      deletedAt: props['deleted_at'] != null ? DateTime.parse(props['deleted_at'] as String) : null,
     );
   }
-
 
   PuntoEstructura copyWith({
     LatLng? coordenadas,
@@ -286,6 +335,7 @@ class PuntoEstructura {
     EstadoEstructura? estado,
     int? nivelesCantidad,
     String? notas,
+    String? updatedBy,
     List<Nivel>? niveles,
   }) =>
       PuntoEstructura(
@@ -301,6 +351,11 @@ class PuntoEstructura {
         fechaCreacion: fechaCreacion,
         updatedAt: DateTime.now(),
         syncDirty: true,
+        createdBy: createdBy,
+        updatedBy: updatedBy ?? this.updatedBy,
+        deviceId: deviceId,
+        syncVersion: syncVersion,
+        deletedAt: deletedAt,
         niveles: niveles ?? this.niveles,
       );
 }
@@ -320,6 +375,13 @@ class LineaCamino {
   final DateTime updatedAt;
   final bool syncDirty;
 
+  // ── Campos de Auditoría y Sincronización Offline ─────────────────────────
+  final String? createdBy;
+  final String? updatedBy;
+  final String? deviceId;
+  final int syncVersion;
+  final DateTime? deletedAt;
+
   static const _uuid = Uuid();
 
   LineaCamino({
@@ -331,6 +393,11 @@ class LineaCamino {
     DateTime? fechaCreacion,
     DateTime? updatedAt,
     this.syncDirty = true,
+    this.createdBy,
+    this.updatedBy,
+    this.deviceId,
+    this.syncVersion = 0,
+    this.deletedAt,
   }) : fechaCreacion = fechaCreacion ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 
@@ -339,6 +406,8 @@ class LineaCamino {
     required String nombre,
     TipoCamino tipo = TipoCamino.terraceria,
     String notas = '',
+    String? createdBy,
+    String? deviceId,
   }) {
     return LineaCamino(
       id: _uuid.v4(),
@@ -347,8 +416,15 @@ class LineaCamino {
       tipo: tipo,
       notas: notas,
       syncDirty: true,
+      createdBy: createdBy,
+      updatedBy: createdBy,
+      deviceId: deviceId,
+      syncVersion: 0,
     );
   }
+
+  /// True si el registro fue eliminado lógicamente (soft-delete)
+  bool get estaEliminado => deletedAt != null;
 
   /// Retorna la representación geométrica en WKT
   String get geomWkt {
@@ -382,6 +458,11 @@ class LineaCamino {
       'max_y': b['max_y'],
       'updated_at': updatedAt.toIso8601String(),
       'sync_dirty': syncDirty ? 1 : 0,
+      'created_by': createdBy,
+      'updated_by': updatedBy,
+      'device_id': deviceId,
+      'sync_version': syncVersion,
+      'deleted_at': deletedAt?.toIso8601String(),
     };
   }
 
@@ -407,6 +488,11 @@ class LineaCamino {
         'fechaCreacion': fechaCreacion.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'syncDirty': syncDirty,
+        'createdBy': createdBy,
+        'updatedBy': updatedBy,
+        'deviceId': deviceId,
+        'syncVersion': syncVersion,
+        'deletedAt': deletedAt?.toIso8601String(),
       };
 
   factory LineaCamino.fromJson(Map<String, dynamic> json) {
@@ -427,6 +513,11 @@ class LineaCamino {
       fechaCreacion: json['fechaCreacion'] != null ? DateTime.parse(json['fechaCreacion'] as String) : DateTime.now(),
       updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt'] as String) : DateTime.now(),
       syncDirty: json['syncDirty'] as bool? ?? true,
+      createdBy: json['createdBy'] as String?,
+      updatedBy: json['updatedBy'] as String?,
+      deviceId: json['deviceId'] as String?,
+      syncVersion: (json['syncVersion'] as num?)?.toInt() ?? 0,
+      deletedAt: json['deletedAt'] != null ? DateTime.parse(json['deletedAt'] as String) : null,
     );
   }
 
@@ -441,6 +532,10 @@ class LineaCamino {
           'nombre': nombre,
           'tipo': tipo.name,
           'notas': notas,
+          'created_by': createdBy,
+          'updated_by': updatedBy,
+          'device_id': deviceId,
+          'sync_version': syncVersion,
         }
       };
 
@@ -462,6 +557,11 @@ class LineaCamino {
       ),
       notas: props['notas'] as String? ?? '',
       syncDirty: props['sync_dirty'] == true || props['sync_dirty'] == 1,
+      createdBy: props['created_by'] as String?,
+      updatedBy: props['updated_by'] as String?,
+      deviceId: props['device_id'] as String?,
+      syncVersion: (props['sync_version'] as num?)?.toInt() ?? 0,
+      deletedAt: props['deleted_at'] != null ? DateTime.parse(props['deleted_at'] as String) : null,
     );
   }
 
@@ -482,6 +582,13 @@ class PoligonoUPM {
   final DateTime updatedAt;
   final bool syncDirty;
 
+  // ── Campos de Auditoría y Sincronización Offline ─────────────────────────
+  final String? createdBy;
+  final String? updatedBy;
+  final String? deviceId;
+  final int syncVersion;
+  final DateTime? deletedAt;
+
   static const _uuid = Uuid();
 
   PoligonoUPM({
@@ -493,6 +600,11 @@ class PoligonoUPM {
     DateTime? fechaCreacion,
     DateTime? updatedAt,
     this.syncDirty = true,
+    this.createdBy,
+    this.updatedBy,
+    this.deviceId,
+    this.syncVersion = 0,
+    this.deletedAt,
   }) : fechaCreacion = fechaCreacion ?? DateTime.now(),
        updatedAt = updatedAt ?? DateTime.now();
 
@@ -501,6 +613,8 @@ class PoligonoUPM {
     required String nombre,
     String codigoUPM = '',
     String notas = '',
+    String? createdBy,
+    String? deviceId,
   }) {
     return PoligonoUPM(
       id: _uuid.v4(),
@@ -509,8 +623,15 @@ class PoligonoUPM {
       codigoUPM: codigoUPM,
       notas: notas,
       syncDirty: true,
+      createdBy: createdBy,
+      updatedBy: createdBy,
+      deviceId: deviceId,
+      syncVersion: 0,
     );
   }
+
+  /// True si el registro fue eliminado lógicamente (soft-delete)
+  bool get estaEliminado => deletedAt != null;
 
   /// Retorna la representación geométrica en WKT
   String get geomWkt {
@@ -548,6 +669,11 @@ class PoligonoUPM {
       'max_y': b['max_y'],
       'updated_at': updatedAt.toIso8601String(),
       'sync_dirty': syncDirty ? 1 : 0,
+      'created_by': createdBy,
+      'updated_by': updatedBy,
+      'device_id': deviceId,
+      'sync_version': syncVersion,
+      'deleted_at': deletedAt?.toIso8601String(),
     };
   }
 
@@ -591,6 +717,11 @@ class PoligonoUPM {
         'fechaCreacion': fechaCreacion.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'syncDirty': syncDirty,
+        'createdBy': createdBy,
+        'updatedBy': updatedBy,
+        'deviceId': deviceId,
+        'syncVersion': syncVersion,
+        'deletedAt': deletedAt?.toIso8601String(),
       };
 
   factory PoligonoUPM.fromJson(Map<String, dynamic> json) {
@@ -608,6 +739,11 @@ class PoligonoUPM {
       fechaCreacion: json['fechaCreacion'] != null ? DateTime.parse(json['fechaCreacion'] as String) : DateTime.now(),
       updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt'] as String) : DateTime.now(),
       syncDirty: json['syncDirty'] as bool? ?? true,
+      createdBy: json['createdBy'] as String?,
+      updatedBy: json['updatedBy'] as String?,
+      deviceId: json['deviceId'] as String?,
+      syncVersion: (json['syncVersion'] as num?)?.toInt() ?? 0,
+      deletedAt: json['deletedAt'] != null ? DateTime.parse(json['deletedAt'] as String) : null,
     );
   }
 
@@ -627,6 +763,10 @@ class PoligonoUPM {
           'nombre': nombre,
           'codigo_upm': codigoUPM,
           'notas': notas,
+          'created_by': createdBy,
+          'updated_by': updatedBy,
+          'device_id': deviceId,
+          'sync_version': syncVersion,
         }
       };
 
@@ -650,6 +790,11 @@ class PoligonoUPM {
       codigoUPM: props['codigo_upm'] as String? ?? '',
       notas: props['notas'] as String? ?? '',
       syncDirty: props['sync_dirty'] == true || props['sync_dirty'] == 1,
+      createdBy: props['created_by'] as String?,
+      updatedBy: props['updated_by'] as String?,
+      deviceId: props['device_id'] as String?,
+      syncVersion: (props['sync_version'] as num?)?.toInt() ?? 0,
+      deletedAt: props['deleted_at'] != null ? DateTime.parse(props['deleted_at'] as String) : null,
     );
   }
 

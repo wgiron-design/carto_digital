@@ -129,16 +129,16 @@ class PostGISService {
     }
   }
 
-  /// Elimina una feature por ID de PostGIS
-  Future<bool> eliminarFeature(String tabla, String id) async {
+  /// Soft-delete de una feature por ID en PostGIS.
+  /// Marca deleted_at en el servidor en lugar de borrar físicamente.
+  Future<bool> eliminarFeature(String tabla, String id, {String? updatedBy}) async {
     try {
-      final response = await http.delete(
-        Uri.parse('$baseUrl/api/capas/$tabla/features/$id'),
-      ).timeout(const Duration(seconds: 5));
-
+      final uri = Uri.parse('$baseUrl/api/capas/$tabla/features/$id')
+          .replace(queryParameters: updatedBy != null ? {'updated_by': updatedBy} : null);
+      final response = await http.delete(uri).timeout(const Duration(seconds: 5));
       return response.statusCode == 200;
     } catch (e) {
-      debugPrint('[PostGISService] Error eliminando feature $id de $tabla: $e');
+      debugPrint('[PostGISService] Error eliminando (soft-delete) feature $id de $tabla: $e');
       return false;
     }
   }
@@ -148,12 +148,16 @@ class PostGISService {
     required List<PuntoEstructura> puntos,
     required List<LineaCamino> lineas,
     required List<PoligonoUPM> poligonos,
+    String? userId,
+    String? deviceId,
   }) async {
     try {
       final payload = {
         'puntos': puntos.map((p) => p.toGeoJson()).toList(),
         'lineas': lineas.map((l) => l.toGeoJson()).toList(),
         'poligonos': poligonos.map((p) => p.toGeoJson()).toList(),
+        if (userId != null) 'user_id': userId,
+        if (deviceId != null) 'device_id': deviceId,
       };
 
       final response = await http.post(

@@ -41,7 +41,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       dbPath,
-      version: 4,
+      version: 5,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -73,6 +73,16 @@ class DatabaseHelper {
       await db.execute('ALTER TABLE hogares ADD COLUMN personas_80_mas INTEGER');
       await db.execute('ALTER TABLE hogares ADD COLUMN personas_no_edad INTEGER');
     }
+    if (oldVersion < 5) {
+      // Campos de auditoría y sincronización offline
+      for (final table in ['estructuras', 'caminos', 'upm']) {
+        await db.execute('ALTER TABLE $table ADD COLUMN created_by TEXT');
+        await db.execute('ALTER TABLE $table ADD COLUMN updated_by TEXT');
+        await db.execute('ALTER TABLE $table ADD COLUMN device_id TEXT');
+        await db.execute('ALTER TABLE $table ADD COLUMN sync_version INTEGER DEFAULT 0');
+        await db.execute('ALTER TABLE $table ADD COLUMN deleted_at TEXT');
+      }
+    }
   }
 
   Future<void> _onConfigure(Database db) async {
@@ -89,7 +99,12 @@ class DatabaseHelper {
         min_y REAL,
         max_y REAL,
         updated_at TEXT,
-        sync_dirty INTEGER DEFAULT 1
+        sync_dirty INTEGER DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        device_id TEXT,
+        sync_version INTEGER DEFAULT 0,
+        deleted_at TEXT
       )
     ''');
     
@@ -110,7 +125,12 @@ class DatabaseHelper {
         min_y REAL,
         max_y REAL,
         updated_at TEXT,
-        sync_dirty INTEGER DEFAULT 1
+        sync_dirty INTEGER DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        device_id TEXT,
+        sync_version INTEGER DEFAULT 0,
+        deleted_at TEXT
       )
     ''');
     
@@ -138,6 +158,11 @@ class DatabaseHelper {
         niveles_cantidad INTEGER,
         updated_at TEXT,
         sync_dirty INTEGER DEFAULT 1,
+        created_by TEXT,
+        updated_by TEXT,
+        device_id TEXT,
+        sync_version INTEGER DEFAULT 0,
+        deleted_at TEXT,
         FOREIGN KEY (upm_id) REFERENCES upm (id) ON DELETE CASCADE
       )
     ''');
@@ -219,12 +244,29 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> queryAll(String table) async {
     final db = await database;
-    return await db.query(table);
+    // Retornar solo registros no eliminados (soft-delete)
+    return await db.query(table, where: 'deleted_at IS NULL');
   }
 
   Future<void> deleteEntity(String table, String id) async {
     final db = await database;
     await db.delete(table, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Soft-delete: marca deleted_at y sync_dirty=1 en lugar de borrar físicamente.
+  /// El registro se sincroniza con el servidor en el próximo batch sync.
+  Future<void> softDeleteEntity(String table, String id) async {
+    final db = await database;
+    await db.update(
+      table,
+      {
+        'deleted_at': DateTime.now().toIso8601String(),
+        'updated_at': DateTime.now().toIso8601String(),
+        'sync_dirty': 1,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

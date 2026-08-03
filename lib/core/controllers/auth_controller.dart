@@ -1,4 +1,6 @@
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import '../models/user_model.dart';
 import '../services/auth_service.dart';
 
@@ -21,7 +23,15 @@ class AuthController extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
   String? get successMessage => _successMessage;
 
-  bool get isInactiveUserError => 
+  /// UUID del usuario actualmente autenticado (null si no hay sesión)
+  String? get currentUserId => _currentUser?.id;
+
+  /// Identificador único e inmutable del dispositivo móvil.
+  /// Se genera en el primer login y persiste en SharedPreferences.
+  String? _deviceId;
+  String? get deviceId => _deviceId;
+
+  bool get isInactiveUserError =>
       _errorMessage != null && _errorMessage!.toLowerCase().contains('usuario inactivo');
 
   AuthController() {
@@ -32,11 +42,24 @@ class AuthController extends ChangeNotifier {
     _isCheckingAuth = true;
     notifyListeners();
 
+    // Cargar device_id persistido (si existe)
+    final prefs = await SharedPreferences.getInstance();
+    _deviceId = prefs.getString('device_id');
+
     // En inicio, por seguridad no hay sesión activa por defecto hasta que el usuario se loguee
     _isAuthenticated = false;
     _currentUser = null;
     _isCheckingAuth = false;
     notifyListeners();
+  }
+
+  /// Genera y persiste un UUID de dispositivo único la primera vez que se llama.
+  Future<void> _initDeviceId() async {
+    if (_deviceId != null) return;
+    const uuid = Uuid();
+    _deviceId = uuid.v4();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('device_id', _deviceId!);
   }
 
   void clearMessages() {
@@ -56,6 +79,8 @@ class AuthController extends ChangeNotifier {
       _currentUser = result.user;
       _token = result.token;
       _isAuthenticated = true;
+      // Asegurar que el device_id esté inicializado en el primer login
+      await _initDeviceId();
       _isLoading = false;
       notifyListeners();
       return true;
@@ -132,6 +157,7 @@ class AuthController extends ChangeNotifier {
     _isAuthenticated = false;
     _errorMessage = null;
     _successMessage = null;
+    // No se resetea _deviceId: el identificador de dispositivo persiste entre sesiones
     notifyListeners();
   }
 }

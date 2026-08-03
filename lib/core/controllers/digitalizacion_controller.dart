@@ -474,13 +474,36 @@ class DigitalizacionController extends ChangeNotifier {
   // ────────────────────────────────────────────────────────────────────────────
 
   /// Crea y registra un nuevo punto. Llamar tras obtener atributos del usuario.
-  void crearPunto(PuntoEstructura punto) {
-    puntos.add(punto);
+  void crearPunto(PuntoEstructura punto, {String? createdBy, String? deviceId}) {
+    // Si se pasan credenciales de auditoría, re-crear el punto con esos campos
+    final puntoConAuditoria = createdBy != null || deviceId != null
+        ? PuntoEstructura(
+            id: punto.id,
+            coordenadas: punto.coordenadas,
+            nombre: punto.nombre,
+            categoria: punto.categoria,
+            tipoFormal: punto.tipoFormal,
+            tipoReferencia: punto.tipoReferencia,
+            estado: punto.estado,
+            nivelesCantidad: punto.nivelesCantidad,
+            notas: punto.notas,
+            fechaCreacion: punto.fechaCreacion,
+            updatedAt: punto.updatedAt,
+            syncDirty: punto.syncDirty,
+            createdBy: createdBy ?? punto.createdBy,
+            updatedBy: createdBy ?? punto.updatedBy,
+            deviceId: deviceId ?? punto.deviceId,
+            syncVersion: punto.syncVersion,
+            niveles: punto.niveles,
+          )
+        : punto;
+
+    puntos.add(puntoConAuditoria);
     notifyListeners();
     // Guardado persistente en SQLite local
-    DatabaseHelper().saveEstructuraCompleta(punto);
+    DatabaseHelper().saveEstructuraCompleta(puntoConAuditoria);
     // Sincronizar inmediatamente con PostGIS en Neon
-    PostGISService().guardarFeature('estructuras', punto.toGeoJson()).then((exito) {
+    PostGISService().guardarFeature('estructuras', puntoConAuditoria.toGeoJson()).then((exito) {
       if (exito) {
         _onlinePostGIS = true;
       } else {
@@ -491,13 +514,21 @@ class DigitalizacionController extends ChangeNotifier {
   }
 
   /// Finaliza la línea en construcción y la agrega a la colección.
-  void finalizarLinea({required String nombre, TipoCamino tipo = TipoCamino.terraceria, String notas = ''}) {
+  void finalizarLinea({
+    required String nombre,
+    TipoCamino tipo = TipoCamino.terraceria,
+    String notas = '',
+    String? createdBy,
+    String? deviceId,
+  }) {
     if (_verticesEnConstruccion.length < 2) return;
     final linea = LineaCamino.nuevo(
       vertices: List.from(_verticesEnConstruccion),
       nombre: nombre,
       tipo: tipo,
       notas: notas,
+      createdBy: createdBy,
+      deviceId: deviceId,
     );
     lineas.add(linea);
     DatabaseHelper().insertEntity('caminos', linea.toMapDB());
@@ -521,7 +552,13 @@ class DigitalizacionController extends ChangeNotifier {
   /// Si [autoEnsambladoPoligono] está activo, se aplica una operación de
   /// diferencia topológica contra todos los polígonos existentes, recortando
   /// cualquier área solapada antes de guardar el nuevo polígono.
-  void finalizarPoligono({required String nombre, String codigoUPM = '', String notas = ''}) {
+  void finalizarPoligono({
+    required String nombre,
+    String codigoUPM = '',
+    String notas = '',
+    String? createdBy,
+    String? deviceId,
+  }) {
     if (_verticesEnConstruccion.length < 3) return;
 
     var vertices = List<LatLng>.from(_verticesEnConstruccion);
@@ -549,6 +586,8 @@ class DigitalizacionController extends ChangeNotifier {
       nombre: nombre,
       codigoUPM: codigoUPM,
       notas: notas,
+      createdBy: createdBy,
+      deviceId: deviceId,
     );
     poligonos.add(poligono);
     DatabaseHelper().insertEntity('upm', poligono.toMapDB());
@@ -571,12 +610,36 @@ class DigitalizacionController extends ChangeNotifier {
   // ELIMINACIÓN Y EDICIÓN
   // ────────────────────────────────────────────────────────────────────────────
 
-  void eliminarPunto(String id) {
-    puntos.removeWhere((p) => p.id == id);
+  void eliminarPunto(String id, {String? updatedBy}) {
+    // Soft-delete local: marcar como eliminado en lugar de borrar físicamente
+    final index = puntos.indexWhere((p) => p.id == id);
+    if (index != -1) {
+      final puntoEliminado = PuntoEstructura(
+        id: puntos[index].id,
+        coordenadas: puntos[index].coordenadas,
+        nombre: puntos[index].nombre,
+        categoria: puntos[index].categoria,
+        tipoFormal: puntos[index].tipoFormal,
+        tipoReferencia: puntos[index].tipoReferencia,
+        estado: puntos[index].estado,
+        nivelesCantidad: puntos[index].nivelesCantidad,
+        notas: puntos[index].notas,
+        fechaCreacion: puntos[index].fechaCreacion,
+        syncDirty: true,
+        createdBy: puntos[index].createdBy,
+        updatedBy: updatedBy ?? puntos[index].updatedBy,
+        deviceId: puntos[index].deviceId,
+        syncVersion: puntos[index].syncVersion,
+        deletedAt: DateTime.now(),
+        niveles: puntos[index].niveles,
+      );
+      DatabaseHelper().softDeleteEntity('estructuras', id);
+      puntos.removeAt(index);
+    }
     if (_idSeleccionado == id) _idSeleccionado = null;
     notifyListeners();
-    DatabaseHelper().deleteEntity('estructuras', id);
-    PostGISService().eliminarFeature('estructuras', id);
+    // Soft-delete en PostGIS vía API
+    PostGISService().eliminarFeature('estructuras', id, updatedBy: updatedBy);
   }
 
   void actualizarPunto(PuntoEstructura puntoActualizado) {
@@ -589,20 +652,28 @@ class DigitalizacionController extends ChangeNotifier {
     }
   }
 
-  void eliminarLinea(String id) {
-    lineas.removeWhere((l) => l.id == id);
+  void eliminarLinea(String id, {String? updatedBy}) {
+    // Soft-delete local
+    final index = lineas.indexWhere((l) => l.id == id);
+    if (index != -1) {
+      DatabaseHelper().softDeleteEntity('caminos', id);
+      lineas.removeAt(index);
+    }
     if (_idSeleccionado == id) _idSeleccionado = null;
     notifyListeners();
-    DatabaseHelper().deleteEntity('caminos', id);
-    PostGISService().eliminarFeature('caminos', id);
+    PostGISService().eliminarFeature('caminos', id, updatedBy: updatedBy);
   }
 
-  void eliminarPoligono(String id) {
-    poligonos.removeWhere((p) => p.id == id);
+  void eliminarPoligono(String id, {String? updatedBy}) {
+    // Soft-delete local
+    final index = poligonos.indexWhere((p) => p.id == id);
+    if (index != -1) {
+      DatabaseHelper().softDeleteEntity('upm', id);
+      poligonos.removeAt(index);
+    }
     if (_idSeleccionado == id) _idSeleccionado = null;
     notifyListeners();
-    DatabaseHelper().deleteEntity('upm', id);
-    PostGISService().eliminarFeature('upms', id);
+    PostGISService().eliminarFeature('upms', id, updatedBy: updatedBy);
   }
 
   void eliminarUltimoVertice() {
