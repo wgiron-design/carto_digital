@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Permite compartir archivos del directorio de caché de la app -->
+    <cache-path name="cache" path="." />
+    <!-- Permite compartir archivos del directorio de datos de la app -->
+    <files-path name="files" path="." />
+    <!-- Directorio de almacenamiento externo de la app (no requiere permisos en Android 14) -->
+    <external-files-path name="external_files" path="." />
+</paths>

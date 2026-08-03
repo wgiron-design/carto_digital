@@ -1,0 +1,14 @@
+como levantar el backend postgres para la app INE
+
+
+
+cd c:\IA\carto_digital\backend_python
+uvicorn app.main:app --reload --port 8000
+
+- el uvicorn esta instalado en 
+c:\users\giron\appdata\local\python\pythoncore-3.14-64\scripts\uvicorn app.main:app --reload --port 8000
+
+como entrar al portal de administración de capas
+
+http://localhost:8000/admin
+

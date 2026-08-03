@@ -1,0 +1,267 @@
+from fastapi import APIRouter, HTTPException, status, Depends
+import asyncpg
+from typing import Dict, Any, List
+from datetime import datetime, timezone
+import uuid
+
+from app.database import get_db_pool
+from app.schemas.auth import (
+    UserRegister,
+    UserLogin,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
+    UserResponse,
+    TokenResponse,
+    UserUpdateStatus,
+    RoleEnum
+)
+from app.security import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    get_current_user_claims
+)
+
+router = APIRouter(prefix="/api/v1/auth", tags=["Autenticación"])
+
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_21_CREATED if hasattr(status, 'HTTP_21_CREATED') else 201)
+async def register(payload: UserRegister, pool: asyncpg.Pool = Depends(get_db_pool)):
+    """
+    Registro de nuevos usuarios.
+    Validaciones: Email válido, Contraseña >= 7 caracteres, Username único.
+    """
+    async with pool.acquire() as conn:
+        # Verificar duplicados
+        existing = await conn.fetchrow("""
+            SELECT username, email FROM users 
+            WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2)
+        """, payload.username, payload.email)
+
+        if existing:
+            if existing['username'].lower() == payload.username.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="El nombre de usuario ya está registrado."
+                )
+            if existing['email'].lower() == payload.email.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="El correo electrónico ya está registrado."
+                )
+
+        pwd_hash = hash_password(payload.password)
+        
+        row = await conn.fetchrow("""
+            INSERT INTO users (username, email, password_hash, role, is_active)
+            VALUES ($1, $2, $3, $4::user_role_enum, true)
+            RETURNING id, username, email, role, is_active, created_at, last_login_at
+        """, payload.username, payload.email, pwd_hash, RoleEnum.CARTOGRAFO.value)
+
+        return UserResponse(
+            id=str(row['id']),
+            username=row['username'],
+            email=row['email'],
+            role=RoleEnum(row['role']),
+            is_active=row['is_active'],
+            created_at=row['created_at'],
+            last_login_at=row['last_login_at']
+        )
+
+@router.post("/login", response_model=TokenResponse)
+async def login(payload: UserLogin, pool: asyncpg.Pool = Depends(get_db_pool)):
+    """
+    Autenticación de usuario.
+    Verifica estado activo/inactivo (devuelve "usuario inactivo" exacto si is_active es false).
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT id, username, email, password_hash, role, is_active, created_at, last_login_at 
+            FROM users 
+            WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
+        """, payload.username)
+
+        if not row or not verify_password(payload.password, row['password_hash']):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Credenciales inválidas"
+            )
+
+        # REGLA CRÍTICA 4: Control de estado activo / inactivo
+        if not row['is_active']:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="usuario inactivo"
+            )
+
+        # Actualizar último inicio de sesión
+        now = datetime.now(timezone.utc)
+        await conn.execute("""
+            UPDATE users SET last_login_at = $1 WHERE id = $2
+        """, now, row['id'])
+
+        user_obj = UserResponse(
+            id=str(row['id']),
+            username=row['username'],
+            email=row['email'],
+            role=RoleEnum(row['role']),
+            is_active=row['is_active'],
+            created_at=row['created_at'],
+            last_login_at=now
+        )
+
+        token = create_access_token({
+            "sub": str(row['id']),
+            "username": row['username'],
+            "role": row['role']
+        })
+
+        return TokenResponse(
+            access_token=token,
+            token_type="bearer",
+            user=user_obj
+        )
+
+@router.post("/forgot-password")
+async def forgot_password(payload: ForgotPasswordRequest, pool: asyncpg.Pool = Depends(get_db_pool)):
+    """
+    Recuperación de contraseña.
+    REGLA CRÍTICA 5: Verifica que el username y el email ingresados hagan MATCH exacto en la misma cuenta.
+    """
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT id, username, email, is_active 
+            FROM users 
+            WHERE LOWER(username) = LOWER($1) AND LOWER(email) = LOWER($2)
+        """, payload.username, payload.email)
+
+        if row:
+            # Generar token de recuperación temporal de 15 minutos
+            reset_token = create_access_token({
+                "sub": str(row['id']),
+                "scope": "reset_password"
+            })
+            # Simulación/Registro de despacho de correo electrónico
+            print(f"[AUTH EMAIL SERVICE] Token de recuperación generado para usuario '{row['username']}': {reset_token}")
+
+        # Mensaje neutro de respuesta por seguridad contra enumeración
+        return {
+            "message": "Si los datos ingresados coinciden con nuestros registros, se enviarán las instrucciones de recuperación a su correo electrónico."
+        }
+
+@router.post("/reset-password")
+async def reset_password(payload: ResetPasswordRequest, pool: asyncpg.Pool = Depends(get_db_pool)):
+    """
+    Restablece la contraseña utilizando un token válido.
+    """
+    from app.security import decode_access_token
+    claims = decode_access_token(payload.token)
+    
+    if claims.get("scope") != "reset_password":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token no válido para restablecimiento de contraseña."
+        )
+
+    user_id = claims.get("sub")
+    pwd_hash = hash_password(payload.new_password)
+
+    async with pool.acquire() as conn:
+        result = await conn.execute("""
+            UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2
+        """, pwd_hash, uuid.UUID(user_id))
+
+        if result == "UPDATE 0":
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    return {"message": "Contraseña restablecida exitosamente."}
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(claims: Dict[str, Any] = Depends(get_current_user_claims), pool: asyncpg.Pool = Depends(get_db_pool)):
+    """
+    Retorna el perfil del usuario autenticado.
+    Verifica que el usuario continúe activo en BD.
+    """
+    user_id = claims.get("sub")
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT id, username, email, role, is_active, created_at, last_login_at 
+            FROM users WHERE id = $1
+        """, uuid.UUID(user_id))
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        if not row['is_active']:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="usuario inactivo"
+            )
+
+        return UserResponse(
+            id=str(row['id']),
+            username=row['username'],
+            email=row['email'],
+            role=RoleEnum(row['role']),
+            is_active=row['is_active'],
+            created_at=row['created_at'],
+            last_login_at=row['last_login_at']
+        )
+
+@router.patch("/users/{user_id}/status", response_model=UserResponse)
+async def update_user_status(
+    user_id: str,
+    payload: UserUpdateStatus,
+    claims: Dict[str, Any] = Depends(get_current_user_claims),
+    pool: asyncpg.Pool = Depends(get_db_pool)
+):
+    """
+    Endpoint administrativo para activar/desactivar usuario o cambiar rol.
+    Requiere rol de 'administrador'.
+    """
+    if claims.get("role") != RoleEnum.ADMINISTRADOR.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acceso denegado. Se requiere rol de administrador."
+        )
+
+    async with pool.acquire() as conn:
+        updates = []
+        args = []
+        idx = 1
+
+        if payload.is_active is not None:
+            updates.append(f"is_active = ${idx}")
+            args.append(payload.is_active)
+            idx += 1
+
+        if payload.role is not None:
+            updates.append(f"role = ${idx}::user_role_enum")
+            args.append(payload.role.value)
+            idx += 1
+
+        if not updates:
+            raise HTTPException(status_code=400, detail="No se proporcionaron campos a actualizar.")
+
+        updates.append("updated_at = NOW()")
+        args.append(uuid.UUID(user_id))
+
+        sql = f"""
+            UPDATE users 
+            SET {", ".join(updates)}
+            WHERE id = ${idx}
+            RETURNING id, username, email, role, is_active, created_at, last_login_at
+        """
+        row = await conn.fetchrow(sql, *args)
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+        return UserResponse(
+            id=str(row['id']),
+            username=row['username'],
+            email=row['email'],
+            role=RoleEnum(row['role']),
+            is_active=row['is_active'],
+            created_at=row['created_at'],
+            last_login_at=row['last_login_at']
+        )

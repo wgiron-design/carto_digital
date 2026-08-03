@@ -1,0 +1,50 @@
+name: carto_digital
+description: Aplicación GIS móvil para cartografía digital con soporte offline y Android 14.
+publish_to: "none"
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Selector de archivos/carpetas (usa SAF internamente, activamente mantenido)
+  file_picker: ^8.1.7
+
+  # ── PASO 2: VISOR DE MAPA ────────────────────────────────────────────────
+  # Motor de mapas interactivo (usa coordenadas nativas Lat/Lng, sin conversión UTM)
+  flutter_map: ^8.3.0
+
+  # Tipos geográficos: LatLng, LatLngBounds (requerido por flutter_map)
+  latlong2: ^0.9.1
+
+  # Permisos en runtime (para READ_MEDIA_IMAGES en pasos futuros)
+  permission_handler: ^11.3.1
+
+  # Utilidades para rutas del dispositivo (almacenamiento interno de la app)
+  path_provider: ^2.1.3
+
+  # Base de Datos (SQLite)
+  sqflite: ^2.4.0
+  uuid: ^4.5.0
+
+  # Estado reactivo (ChangeNotifier)
+  provider: ^6.1.2
+
+  # Íconos de Material Design 3
+  cupertino_icons: ^1.0.8
+
+  # HTTP Client para PostGIS API
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

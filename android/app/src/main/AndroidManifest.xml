@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        PERMISOS PARA ANDROID 14 (API 34)
+        
+        NOTA: En Android 14+, READ_EXTERNAL_STORAGE y WRITE_EXTERNAL_STORAGE
+        ya NO son efectivos. En su lugar, usamos Storage Access Framework (SAF)
+        que no requiere permisos de manifiesto para acceso a carpetas elegidas por el usuario.
+        
+        Solo declaramos los permisos mínimos necesarios.
+    -->
+    
+    <!-- Permiso READ_MEDIA para acceder a imágenes (para cargar croquis en paso 2) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="Carto Digital"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="false"
+        android:allowBackup="false"
+        android:supportsRtl="true">
+
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- Especificamos que esta actividad es el punto de entrada principal -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!--
+            SAF FileProvider para compatibilidad con proveedores de contenido internos.
+            No es estrictamente necesario para SAF básico, pero es buena práctica.
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
+
+    </application>
+</manifest>

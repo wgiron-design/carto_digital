@@ -1,0 +1,42 @@
+Actúa como un desarrollador experto en Flutter, especializado en sistemas de información geográfica (SIG) para dispositivos móviles y optimización para Android 14 (API 34). 
+
+Quiero construir una aplicación móvil para una tableta Lenovo que se distribuirá en formato APK. La aplicación debe funcionar de forma offline y almacenar sus datos en un archivo JSON dentro de la carpeta "Documentos" del dispositivo, utilizando el Storage Access Framework (SAF) de Android para cumplir con las restricciones de Android 14.
+
+Por favor, lee con atención las especificaciones del proyecto. No empieces a programar todo de golpe; primero analiza los requerimientos y luego iniciaremos con el Paso 1.
+
+### ESPECIFICACIONES DEL PROYECTO
+
+1. **Sistema de Coordenadas:**
+   - Coordenadas geográficas nativas (Latitud y Longitud en sistema estándar WGS84). No se requiere conversión a proyección UTM.
+
+2. **Visualización y Fondo:**
+   - Un visor de mapa interactivo (se sugiere usar la librería 'flutter_map' que trabaja con coordenadas nativas).
+   - Opción para cargar una imagen de fondo (plano o croquis en JPG/PNG).
+   - Sistema de calibración sencillo para la imagen: el usuario debe poder ingresar las coordenadas geográficas (Lat/Lng) de los límites (norte, sur, este, oeste) o de al menos dos esquinas de la imagen para proyectarla correctamente sobre el mapa (Image Overlay).
+
+3. **Capas Geográficas (Digitalización en pantalla):**
+   - **Capa Puntos (Estructuras):** Geometría de tipo Punto. Al hacer clic en el mapa, se crea un punto con sus coordenadas geográficas nativas (Lat/Lng).
+   - **Capa Líneas (Caminos):** Geometría de tipo Línea. Permite digitalizar caminos haciendo clics sucesivos y editar sus vértices (coordenadas Lat/Lng).
+   - **Capa Polígonos (UPM - Unidades Primarias de Muestreo):** Geometría de tipo Polígono. Permite dibujar áreas cerradas y editar sus límites en formato Lat/Lng.
+
+4. **Estructura de Datos de la Capa Puntos (Jerárquica):**
+   - Cada Punto (Estructura) tiene atributos básicos, sus coordenadas geográficas y una relación uno-a-muchos con la capa **Niveles**.
+   - Cada **Nivel** puede tener uno o muchos **Locales**.
+   - Cada **Local** puede tener a su vez **Sub-locales** (estructura anidada).
+   - Solo la capa base (Punto) está georreferenciada. Las subcapas (Niveles, Locales, Sub-locales) son de datos alfanuméricos y se gestionan mediante formularios relacionales dinámicos.
+
+5. **Almacenamiento:**
+   - Guardado automático o manual en un archivo estructurado (JSON o Base de Datos local exportable) ubicado en la carpeta "Documentos" del dispositivo usando SAF para evitar problemas de permisos en Android 14.
+
+---
+
+### PLAN DE DESARROLLO (Trabajaremos paso a paso)
+
+Para evitar errores, construiremos la aplicación de manera incremental. 
+
+**POR FAVOR, RESPONDE CONFIRMANDO QUE ENTENDISTE EL PROYECTO Y PROPÓN EL CÓDIGO ÚNICAMENTE PARA EL PASO 1:**
+
+**Paso 1: Estructura base del proyecto y Persistencia en Android 14.**
+- Crea la estructura básica del proyecto en Flutter.
+- Configura las dependencias necesarias en `pubspec.yaml` (incluyendo soporte para Android 14 y acceso a archivos).
+- Implementa una interfaz sencilla para solicitar permiso de acceso a la carpeta de "Documentos" mediante Storage Access Framework y realizar una prueba de escritura/lectura de un archivo JSON de prueba.
