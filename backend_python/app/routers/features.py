@@ -121,9 +121,9 @@ async def create_feature(tabla: str, payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Geometría requerida")
 
     geom_json = json.dumps(geometry)
-    created_by = properties.get("created_by")
-    updated_by = properties.get("updated_by")
-    device_id  = properties.get("device_id")
+    created_by = properties.get("created_by") or None
+    updated_by = properties.get("updated_by") or None
+    device_id  = properties.get("device_id") or None
 
     pool = await get_db_pool()
 
@@ -214,6 +214,7 @@ async def delete_feature(tabla: str, feature_id: str, updated_by: Optional[str] 
     if tabla not in TABLAS_PERMITIDAS:
         raise HTTPException(status_code=400, detail="Tabla no autorizada")
 
+    updated_by = updated_by or None
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         sql = f"""

@@ -17,8 +17,8 @@ async def batch_sync(payload: SyncBatchPayload):
     """
     pool = await get_db_pool()
 
-    user_id  = payload.user_id
-    device_id = payload.device_id
+    user_id   = payload.user_id or None
+    device_id = payload.device_id or None
 
     result: Dict[str, List[SyncedItem]] = {
         "puntos": [],

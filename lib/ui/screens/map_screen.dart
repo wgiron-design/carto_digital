@@ -13,6 +13,7 @@ import '../../core/models/proyecto_cartografico.dart';
 import '../../core/models/imagen_calibrada.dart';
 import '../../core/models/capa_geometrica.dart';
 import '../../core/models/resultado_seleccion.dart';
+import '../../core/controllers/auth_controller.dart';
 import '../../core/services/postgis_service.dart';
 import '../../ui/theme/app_theme.dart';
 import '../../ui/widgets/dialogo_calibracion.dart';
@@ -990,6 +991,7 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _mostrarFormularioPunto(
       BuildContext context, DigitalizacionController digCtrl, LatLng punto) async {
+    final auth = Provider.of<AuthController>(context, listen: false);
     final result = await showDialog<AtributosPuntoResult>(
       context: context,
       builder: (_) => DialogoAtributosPunto(
@@ -999,16 +1001,22 @@ class _MapScreenState extends State<MapScreen> {
     );
 
     if (result != null) {
-      digCtrl.crearPunto(PuntoEstructura.nuevo(
-        coordenadas: punto,
-        nombre: result.nombre,
-        categoria: result.categoria,
-        tipoFormal: result.tipoFormal,
-        tipoReferencia: result.tipoReferencia,
-        estado: result.estado,
-        nivelesCantidad: result.nivelesCantidad,
-        notas: result.notas,
-      ));
+      digCtrl.crearPunto(
+        PuntoEstructura.nuevo(
+          coordenadas: punto,
+          nombre: result.nombre,
+          categoria: result.categoria,
+          tipoFormal: result.tipoFormal,
+          tipoReferencia: result.tipoReferencia,
+          estado: result.estado,
+          nivelesCantidad: result.nivelesCantidad,
+          notas: result.notas,
+          createdBy: auth.currentUserId,
+          deviceId: auth.deviceId,
+        ),
+        createdBy: auth.currentUserId,
+        deviceId: auth.deviceId,
+      );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1023,6 +1031,7 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _mostrarFormularioLinea(
       BuildContext context, DigitalizacionController digCtrl) async {
+    final auth = Provider.of<AuthController>(context, listen: false);
     final verts = List<LatLng>.from(digCtrl.verticesEnConstruccion);
     final linea = LineaCamino.nuevo(vertices: verts, nombre: '');
     final result = await showDialog<AtributosLineaResult>(
@@ -1038,6 +1047,8 @@ class _MapScreenState extends State<MapScreen> {
         nombre: result.nombre,
         tipo: result.tipo,
         notas: result.notas,
+        createdBy: auth.currentUserId,
+        deviceId: auth.deviceId,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1053,6 +1064,7 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _mostrarFormularioPoligono(
       BuildContext context, DigitalizacionController digCtrl) async {
+    final auth = Provider.of<AuthController>(context, listen: false);
     final verts = List<LatLng>.from(digCtrl.verticesEnConstruccion);
     final poligono = PoligonoUPM.nuevo(vertices: verts, nombre: '');
     final result = await showDialog<AtributosPoligonoResult>(
@@ -1068,6 +1080,8 @@ class _MapScreenState extends State<MapScreen> {
         nombre: result.nombre,
         codigoUPM: result.codigoUPM,
         notas: result.notas,
+        createdBy: auth.currentUserId,
+        deviceId: auth.deviceId,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1231,7 +1245,8 @@ class _MapScreenState extends State<MapScreen> {
                         side: const BorderSide(color: AppTheme.error),
                       ),
                       onPressed: () {
-                        digCtrl.eliminarPunto(punto.id);
+                        final auth = Provider.of<AuthController>(context, listen: false);
+                        digCtrl.eliminarPunto(punto.id, updatedBy: auth.currentUserId);
                         Navigator.pop(context);
                       },
                     ),
@@ -1495,7 +1510,8 @@ class _MapScreenState extends State<MapScreen> {
                         side: const BorderSide(color: AppTheme.error),
                       ),
                       onPressed: () {
-                        digCtrl.eliminarLinea(linea.id);
+                        final auth = Provider.of<AuthController>(context, listen: false);
+                        digCtrl.eliminarLinea(linea.id, updatedBy: auth.currentUserId);
                         Navigator.pop(context);
                       },
                     ),
@@ -1686,7 +1702,8 @@ class _MapScreenState extends State<MapScreen> {
                         side: const BorderSide(color: AppTheme.error),
                       ),
                       onPressed: () {
-                        digCtrl.eliminarPoligono(poligono.id);
+                        final auth = Provider.of<AuthController>(context, listen: false);
+                        digCtrl.eliminarPoligono(poligono.id, updatedBy: auth.currentUserId);
                         Navigator.pop(context);
                       },
                     ),

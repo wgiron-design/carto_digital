@@ -41,6 +41,9 @@ dependencies:
   # HTTP Client para PostGIS API
   http: ^1.2.0
 
+  # Persistencia de clave-valor (device_id, preferencias)
+  shared_preferences: ^2.3.5
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
