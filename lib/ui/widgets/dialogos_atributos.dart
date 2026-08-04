@@ -85,8 +85,13 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
     _nombreCtrl = TextEditingController(text: widget.nombreInicial ?? '');
     _notasCtrl = TextEditingController(text: widget.notasIniciales ?? '');
     _categoria = widget.categoriaInicial ?? CategoriaEstructura.formal;
-    _tipoFormal = widget.tipoFormalInicial ?? TipoEstructuraFormal.vivienda;
-    _tipoReferencia = widget.tipoReferenciaInicial ?? TipoEstructuraReferencia.puente;
+    if (_categoria == CategoriaEstructura.formal) {
+      _tipoFormal = widget.tipoFormalInicial ?? TipoEstructuraFormal.vivienda;
+      _tipoReferencia = null;
+    } else {
+      _tipoFormal = null;
+      _tipoReferencia = widget.tipoReferenciaInicial ?? TipoEstructuraReferencia.puente;
+    }
     _estado = widget.estadoInicial ?? EstadoEstructura.presente;
     _niveles = widget.nivelesInicial ?? 1;
   }
@@ -161,7 +166,11 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                             title: const Text('Formal', style: TextStyle(fontSize: 14)),
                             value: CategoriaEstructura.formal,
                             groupValue: _categoria,
-                            onChanged: soloLectura ? null : (v) => setState(() => _categoria = v!),
+                            onChanged: soloLectura ? null : (v) => setState(() {
+                              _categoria = v!;
+                              _tipoFormal = widget.tipoFormalInicial ?? TipoEstructuraFormal.vivienda;
+                              _tipoReferencia = null;
+                            }),
                           ),
                         ),
                         Expanded(
@@ -170,7 +179,11 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                             title: const Text('Referencia Geográfica', style: TextStyle(fontSize: 14)),
                             value: CategoriaEstructura.referencia,
                             groupValue: _categoria,
-                            onChanged: soloLectura ? null : (v) => setState(() => _categoria = v!),
+                            onChanged: soloLectura ? null : (v) => setState(() {
+                              _categoria = v!;
+                              _tipoReferencia = widget.tipoReferenciaInicial ?? TipoEstructuraReferencia.puente;
+                              _tipoFormal = null;
+                            }),
                           ),
                         ),
                       ],
@@ -290,8 +303,8 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                 Navigator.pop(context, (
                   nombre: _nombreCtrl.text.trim(),
                   categoria: _categoria,
-                  tipoFormal: _tipoFormal,
-                  tipoReferencia: _tipoReferencia,
+                  tipoFormal: _categoria == CategoriaEstructura.formal ? _tipoFormal : null,
+                  tipoReferencia: _categoria == CategoriaEstructura.referencia ? _tipoReferencia : null,
                   estado: _estado,
                   nivelesCantidad: _niveles,
                   notas: _notasCtrl.text.trim(),
