@@ -246,6 +246,24 @@ class _MapScreenState extends State<MapScreen> {
                   );
                 }),
 
+              // ── Panel flotante de confirmación de punto (Estructura) ───
+              if (digCtrl.modo == ModoDigitalizacion.punto &&
+                  digCtrl.coordenadaPuntoPendiente != null)
+                Positioned(
+                  bottom: 48,
+                  right: _mostrarPanelCapas ? 252 : 16,
+                  child: PanelConfirmacionPunto(
+                    onConfirmar: () {
+                      final coord = digCtrl.coordenadaPuntoPendiente!;
+                      digCtrl.cancelarPuntoPendiente();
+                      _mostrarFormularioPunto(context, digCtrl, coord);
+                    },
+                    onCancelar: () {
+                      digCtrl.cancelarPuntoPendiente();
+                    },
+                  ),
+                ),
+
               // ── Panel flotante de digitación (línea y polígono) ────────
               if (digCtrl.modo == ModoDigitalizacion.linea || digCtrl.modo == ModoDigitalizacion.poligono)
                 Positioned(
@@ -519,10 +537,7 @@ class _MapScreenState extends State<MapScreen> {
               digCtrl.modo == ModoDigitalizacion.editarLinea ||
               digCtrl.modo == ModoDigitalizacion.editarPoligono) return;
               
-          final resultado = digCtrl.procesarTap(point);
-          if (resultado != null && digCtrl.modo == ModoDigitalizacion.punto) {
-            _mostrarFormularioPunto(context, digCtrl, resultado);
-          }
+          digCtrl.procesarTap(point);
         },
 
 
@@ -612,97 +627,124 @@ class _MapScreenState extends State<MapScreen> {
 
   Widget _buildCapaPuntos(BuildContext context, DigitalizacionController digCtrl) {
     return MarkerLayer(
-      markers: digCtrl.puntos.map((punto) {
-        final seleccionado = digCtrl.idSeleccionado == punto.id;
-        final esModoEditarPunto = digCtrl.modo == ModoDigitalizacion.editarPunto && seleccionado;
-        final enDrag = esModoEditarPunto && digCtrl.dragPuntoActivo;
-        final posicionActual = enDrag
-            ? (digCtrl.posicionDragPuntoTemporal ?? punto.coordenadas)
-            : punto.coordenadas;
+      markers: [
+        ...digCtrl.puntos.map((punto) {
+          final seleccionado = digCtrl.idSeleccionado == punto.id;
+          final esModoEditarPunto = digCtrl.modo == ModoDigitalizacion.editarPunto && seleccionado;
+          final enDrag = esModoEditarPunto && digCtrl.dragPuntoActivo;
+          final posicionActual = enDrag
+              ? (digCtrl.posicionDragPuntoTemporal ?? punto.coordenadas)
+              : punto.coordenadas;
 
-        return Marker(
-          point: posicionActual,
-          width: (seleccionado || esModoEditarPunto) ? 48 : 36,
-          height: (seleccionado || esModoEditarPunto) ? 48 : 36,
-          child: esModoEditarPunto
-              ? GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onPanStart: (details) {
-                    digCtrl.iniciarDragPunto(punto.id);
-                  },
-                  onPanUpdate: (details) {
-                    final newPos = _flutterMapCtrl.camera.screenOffsetToLatLng(details.globalPosition);
-                    digCtrl.actualizarDragPunto(newPos);
-                  },
-                  onPanEnd: (details) {
-                    if (digCtrl.posicionDragPuntoTemporal != null) {
-                      digCtrl.confirmarDragPunto(digCtrl.posicionDragPuntoTemporal!);
-                    } else {
+          return Marker(
+            point: posicionActual,
+            width: (seleccionado || esModoEditarPunto) ? 48 : 36,
+            height: (seleccionado || esModoEditarPunto) ? 48 : 36,
+            child: esModoEditarPunto
+                ? GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onPanStart: (details) {
+                      digCtrl.iniciarDragPunto(punto.id);
+                    },
+                    onPanUpdate: (details) {
+                      final newPos = _flutterMapCtrl.camera.screenOffsetToLatLng(details.globalPosition);
+                      digCtrl.actualizarDragPunto(newPos);
+                    },
+                    onPanEnd: (details) {
+                      if (digCtrl.posicionDragPuntoTemporal != null) {
+                        digCtrl.confirmarDragPunto(digCtrl.posicionDragPuntoTemporal!);
+                      } else {
+                        digCtrl.cancelarDragPunto();
+                      }
+                    },
+                    onPanCancel: () {
                       digCtrl.cancelarDragPunto();
-                    }
-                  },
-                  onPanCancel: () {
-                    digCtrl.cancelarDragPunto();
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 150),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: enDrag
-                          ? const Color(0xFFE53935).withOpacity(0.9)
-                          : const Color(0xFFFFB74D).withOpacity(0.95),
-                      border: Border.all(
-                        color: Colors.white,
-                        width: 3,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: (enDrag ? const Color(0xFFE53935) : const Color(0xFFFFB74D)).withOpacity(0.6),
-                          blurRadius: 12,
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: enDrag
+                            ? const Color(0xFFE53935).withOpacity(0.9)
+                            : const Color(0xFFFFB74D).withOpacity(0.95),
+                        border: Border.all(
+                          color: Colors.white,
+                          width: 3,
                         ),
-                      ],
+                        boxShadow: [
+                          BoxShadow(
+                            color: (enDrag ? const Color(0xFFE53935) : const Color(0xFFFFB74D)).withOpacity(0.6),
+                            blurRadius: 12,
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          punto.emojiActivo,
+                          style: const TextStyle(fontSize: 20),
+                        ),
+                      ),
                     ),
-                    child: Center(
-                      child: Text(
-                        punto.emojiActivo,
-                        style: const TextStyle(fontSize: 20),
+                  )
+                : GestureDetector(
+                    onTap: () {
+                      digCtrl.seleccionar(punto.id);
+                      _mostrarInfoPunto(context, punto, digCtrl);
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: seleccionado
+                            ? const Color(0xFF4FC3F7).withOpacity(0.9)
+                            : const Color(0xFF4FC3F7).withOpacity(0.85),
+                        border: Border.all(
+                          color: Colors.white,
+                          width: seleccionado ? 3 : 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF4FC3F7).withOpacity(0.5),
+                            blurRadius: seleccionado ? 12 : 6,
+                          ),
+                        ],
+                      ),
+                      child: Center(
+                        child: Text(
+                          punto.emojiActivo,
+                          style: TextStyle(fontSize: seleccionado ? 18 : 14),
+                        ),
                       ),
                     ),
                   ),
-                )
-              : GestureDetector(
-                  onTap: () {
-                    digCtrl.seleccionar(punto.id);
-                    _mostrarInfoPunto(context, punto, digCtrl);
-                  },
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: seleccionado
-                          ? const Color(0xFF4FC3F7).withOpacity(0.9)
-                          : const Color(0xFF4FC3F7).withOpacity(0.85),
-                      border: Border.all(
-                        color: Colors.white,
-                        width: seleccionado ? 3 : 2,
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: const Color(0xFF4FC3F7).withOpacity(0.5),
-                          blurRadius: seleccionado ? 12 : 6,
-                        ),
-                      ],
-                    ),
-                    child: Center(
-                      child: Text(
-                        punto.emojiActivo,
-                        style: TextStyle(fontSize: seleccionado ? 18 : 14),
-                      ),
-                    ),
-                  ),
+          );
+        }),
+        if (digCtrl.modo == ModoDigitalizacion.punto && digCtrl.coordenadaPuntoPendiente != null)
+          Marker(
+            point: digCtrl.coordenadaPuntoPendiente!,
+            width: 44,
+            height: 44,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF4FC3F7).withOpacity(0.9),
+                border: Border.all(
+                  color: Colors.white,
+                  width: 3,
                 ),
-        );
-      }).toList(),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF4FC3F7).withOpacity(0.6),
+                    blurRadius: 10,
+                  ),
+                ],
+              ),
+              child: const Center(
+                child: Text('📍', style: TextStyle(fontSize: 22)),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1779,7 +1821,9 @@ class _MapScreenState extends State<MapScreen> {
       ModoDigitalizacion.punto => (
           '📍 Modo: Punto',
           const Color(0xFF4FC3F7),
-          'Toca el mapa para crear una estructura',
+          digCtrl.coordenadaPuntoPendiente == null
+              ? 'Toca el mapa para fijar la ubicación de la estructura'
+              : 'Usa ✔ para confirmar la posición o ✕ para buscar otra ubicación',
         ),
       ModoDigitalizacion.linea => (
           '🛤️ Modo: Línea',

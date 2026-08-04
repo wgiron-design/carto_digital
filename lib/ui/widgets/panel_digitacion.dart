@@ -400,3 +400,69 @@ class PanelEdicionPunto extends StatelessWidget {
     );
   }
 }
+
+/// Panel flotante para la confirmación de la posición de un punto (Estructura)
+class PanelConfirmacionPunto extends StatelessWidget {
+  final VoidCallback onConfirmar;
+  final VoidCallback onCancelar;
+
+  const PanelConfirmacionPunto({
+    super.key,
+    required this.onConfirmar,
+    required this.onCancelar,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.surface.withOpacity(0.95),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF4FC3F7).withOpacity(0.5),
+          width: 1.5,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.4),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Confirmar ubicación de estructura',
+            style: TextStyle(
+              color: Color(0xFF4FC3F7),
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _BotonAccion(
+                color: const Color(0xFFEF5350),
+                icon: Icons.close,
+                tooltip: 'Cancelar punto y buscar otro lugar',
+                onPressed: onCancelar,
+              ),
+              const SizedBox(width: 16),
+              _BotonAccion(
+                color: const Color(0xFF4CAF50),
+                icon: Icons.check,
+                tooltip: 'Confirmar ubicación y abrir formulario',
+                onPressed: onConfirmar,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
