@@ -80,9 +80,6 @@ class DigitalizacionController extends ChangeNotifier {
   LatLng? _cursorPos;
   LatLng? get cursorPos => _cursorPos;
 
-  /// Coordenada del punto de estructura fijado en el mapa pendiente de confirmación
-  LatLng? _coordenadaPuntoPendiente;
-  LatLng? get coordenadaPuntoPendiente => _coordenadaPuntoPendiente;
 
   // ── Snap topológico ───────────────────────────────────────────────────────
   /// Radio de snap en píxeles. Estándar GIS = 12 px.
@@ -295,7 +292,6 @@ class DigitalizacionController extends ChangeNotifier {
     _verticesEnConstruccion.clear();
     _cursorPos = null;
     _snapActivo = null;
-    _coordenadaPuntoPendiente = null;
   }
 
   // ────────────────────────────────────────────────────────────────────────────
@@ -306,24 +302,10 @@ class DigitalizacionController extends ChangeNotifier {
   ///
   /// Para Punto: retorna inmediatamente el [LatLng] para mostrar el formulario.
   /// Para Línea/Polígono: agrega un vértice y retorna null (sigue construyendo).
-  /// Retorna el [LatLng] del punto si el modo es [ModoDigitalizacion.punto].
-  /// Fijar punto pendiente de confirmación
-  void fijarPuntoPendiente(LatLng coord) {
-    _coordenadaPuntoPendiente = coord;
-    notifyListeners();
-  }
-
-  /// Cancelar punto pendiente
-  void cancelarPuntoPendiente() {
-    _coordenadaPuntoPendiente = null;
-    notifyListeners();
-  }
-
   LatLng? procesarTap(LatLng punto) {
     switch (_modo) {
       case ModoDigitalizacion.punto:
-        fijarPuntoPendiente(punto);
-        return null;
+        return punto;
 
       case ModoDigitalizacion.linea:
       case ModoDigitalizacion.poligono:

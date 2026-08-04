@@ -246,20 +246,18 @@ class _MapScreenState extends State<MapScreen> {
                   );
                 }),
 
-              // ── Panel flotante de confirmación de punto (Estructura) ───
-              if (digCtrl.modo == ModoDigitalizacion.punto &&
-                  digCtrl.coordenadaPuntoPendiente != null)
+              // ── Panel flotante de digitación de punto (Estructura) ──────
+              if (digCtrl.modo == ModoDigitalizacion.punto)
                 Positioned(
                   bottom: 48,
                   right: _mostrarPanelCapas ? 252 : 16,
-                  child: PanelConfirmacionPunto(
-                    onConfirmar: () {
-                      final coord = digCtrl.coordenadaPuntoPendiente!;
-                      digCtrl.cancelarPuntoPendiente();
+                  child: PanelDigitacionPunto(
+                    onFijarPunto: () {
+                      final coord = digCtrl.snapActivo?.snapPoint ?? _flutterMapCtrl.camera.center;
                       _mostrarFormularioPunto(context, digCtrl, coord);
                     },
                     onCancelar: () {
-                      digCtrl.cancelarPuntoPendiente();
+                      digCtrl.setModo(ModoDigitalizacion.navegar);
                     },
                   ),
                 ),
@@ -537,7 +535,10 @@ class _MapScreenState extends State<MapScreen> {
               digCtrl.modo == ModoDigitalizacion.editarLinea ||
               digCtrl.modo == ModoDigitalizacion.editarPoligono) return;
               
-          digCtrl.procesarTap(point);
+          final resultado = digCtrl.procesarTap(point);
+          if (resultado != null && digCtrl.modo == ModoDigitalizacion.punto) {
+            _mostrarFormularioPunto(context, digCtrl, resultado);
+          }
         },
 
 
@@ -719,31 +720,6 @@ class _MapScreenState extends State<MapScreen> {
                   ),
           );
         }),
-        if (digCtrl.modo == ModoDigitalizacion.punto && digCtrl.coordenadaPuntoPendiente != null)
-          Marker(
-            point: digCtrl.coordenadaPuntoPendiente!,
-            width: 44,
-            height: 44,
-            child: Container(
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF4FC3F7).withOpacity(0.9),
-                border: Border.all(
-                  color: Colors.white,
-                  width: 3,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF4FC3F7).withOpacity(0.6),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
-              child: const Center(
-                child: Text('📍', style: TextStyle(fontSize: 22)),
-              ),
-            ),
-          ),
       ],
     );
   }
@@ -1821,9 +1797,7 @@ class _MapScreenState extends State<MapScreen> {
       ModoDigitalizacion.punto => (
           '📍 Modo: Punto',
           const Color(0xFF4FC3F7),
-          digCtrl.coordenadaPuntoPendiente == null
-              ? 'Toca el mapa para fijar la ubicación de la estructura'
-              : 'Usa ✔ para confirmar la posición o ✕ para buscar otra ubicación',
+          'Mueva el mapa posicionando la mira en la ubicación y use ✔ para confirmar',
         ),
       ModoDigitalizacion.linea => (
           '🛤️ Modo: Línea',

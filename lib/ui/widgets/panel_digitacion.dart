@@ -401,14 +401,14 @@ class PanelEdicionPunto extends StatelessWidget {
   }
 }
 
-/// Panel flotante para la confirmación de la posición de un punto (Estructura)
-class PanelConfirmacionPunto extends StatelessWidget {
-  final VoidCallback onConfirmar;
+/// Panel flotante para la digitación de un punto (Estructura) en la mira central
+class PanelDigitacionPunto extends StatelessWidget {
+  final VoidCallback onFijarPunto;
   final VoidCallback onCancelar;
 
-  const PanelConfirmacionPunto({
+  const PanelDigitacionPunto({
     super.key,
-    required this.onConfirmar,
+    required this.onFijarPunto,
     required this.onCancelar,
   });
 
@@ -435,7 +435,7 @@ class PanelConfirmacionPunto extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
-            'Confirmar ubicación de estructura',
+            'Posicione la mira en la ubicación',
             style: TextStyle(
               color: Color(0xFF4FC3F7),
               fontSize: 13,
@@ -449,15 +449,15 @@ class PanelConfirmacionPunto extends StatelessWidget {
               _BotonAccion(
                 color: const Color(0xFFEF5350),
                 icon: Icons.close,
-                tooltip: 'Cancelar punto y buscar otro lugar',
+                tooltip: 'Cancelar y salir del modo punto',
                 onPressed: onCancelar,
               ),
               const SizedBox(width: 16),
               _BotonAccion(
                 color: const Color(0xFF4CAF50),
                 icon: Icons.check,
-                tooltip: 'Confirmar ubicación y abrir formulario',
-                onPressed: onConfirmar,
+                tooltip: 'Fijar posición y abrir formulario',
+                onPressed: onFijarPunto,
               ),
             ],
           ),
