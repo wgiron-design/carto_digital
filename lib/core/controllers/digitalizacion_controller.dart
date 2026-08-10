@@ -160,11 +160,158 @@ class DigitalizacionController extends ChangeNotifier {
 
   LatLng? _posicionOriginalPunto;
 
+  // ── Modo "Agregar Vértice" ────────────────────────────────────────────────
+  bool _modoAgregarVertice = false;
+  bool get modoAgregarVertice => _modoAgregarVertice;
+
+  /// Activa/desactiva el modo de inserción de vértice.
+  /// Solo disponible en modos editarLinea / editarPoligono.
+  void toggleModoAgregarVertice() {
+    if (_modo != ModoDigitalizacion.editarLinea &&
+        _modo != ModoDigitalizacion.editarPoligono) return;
+    _modoAgregarVertice = !_modoAgregarVertice;
+    notifyListeners();
+  }
+
+  /// Inserta un nuevo vértice en el segmento más cercano al punto tocado.
+  /// Retorna true si la inserción fue exitosa.
+  bool insertarVerticeSobreSegmento(LatLng tapPoint, MapCamera camera) {
+    if (!_modoAgregarVertice) return false;
+
+    if (_modo == ModoDigitalizacion.editarLinea) {
+      return _insertarVerticeEnLinea(tapPoint, camera);
+    } else if (_modo == ModoDigitalizacion.editarPoligono) {
+      return _insertarVerticeEnPoligono(tapPoint, camera);
+    }
+    return false;
+  }
+
+  bool _insertarVerticeEnLinea(LatLng tapPoint, MapCamera camera) {
+    if (_idSeleccionado == null) return false;
+    final lineaIndex = lineas.indexWhere((l) => l.id == _idSeleccionado);
+    if (lineaIndex == -1) return false;
+    final verts = lineas[lineaIndex].vertices;
+    if (verts.length < 2) return false;
+
+    final (insertIndex, snapPoint) = _encontrarSegmentoMasCercano(
+        tapPoint, verts, esCerrado: false, camera: camera);
+    if (insertIndex == -1) return false;
+
+    final targetIndex = insertIndex + 1;
+    final nuevosVertices = List<LatLng>.from(verts);
+    nuevosVertices.insert(targetIndex, snapPoint);
+
+    final original = lineas[lineaIndex];
+    final modificada = LineaCamino(
+      id: original.id,
+      vertices: nuevosVertices,
+      nombre: original.nombre,
+      tipo: original.tipo,
+      notas: original.notas,
+      fechaCreacion: original.fechaCreacion,
+      createdBy: original.createdBy,
+      updatedBy: original.updatedBy,
+      deviceId: original.deviceId,
+      syncVersion: original.syncVersion,
+    );
+    lineas[lineaIndex] = modificada;
+    _historialInsercionVertices.add((original.id, targetIndex));
+    DatabaseHelper().insertEntity('caminos', modificada.toMapDB());
+    _ultimoMensaje = '➕ Vértice agregado a la línea';
+    notifyListeners();
+    return true;
+  }
+
+  bool _insertarVerticeEnPoligono(LatLng tapPoint, MapCamera camera) {
+    if (_idPoligonoEditando == null) return false;
+    if (_verticesPoligonoEdicion.length < 3) return false;
+
+    final (insertIndex, snapPoint) = _encontrarSegmentoMasCercano(
+        tapPoint, _verticesPoligonoEdicion, esCerrado: true, camera: camera);
+    if (insertIndex == -1) return false;
+
+    final targetIndex = insertIndex + 1;
+    final tempVertices = List<LatLng>.from(_verticesPoligonoEdicion);
+    tempVertices.insert(targetIndex, snapPoint);
+
+    if (_esPoligonoAutoIntersectante(tempVertices)) {
+      _ultimoMensaje = '⚠️ No se puede agregar el vértice: generaría auto-intersección';
+      notifyListeners();
+      return false;
+    }
+
+    _verticesPoligonoEdicion.insert(targetIndex, snapPoint);
+    _historialInsercionVertices.add((_idPoligonoEditando!, targetIndex));
+    _ultimoMensaje = '➕ Vértice agregado al polígono';
+    notifyListeners();
+    return true;
+  }
+
+  /// Encuentra el segmento más cercano al [tapPoint] y retorna
+  /// el índice del vértice de inicio del segmento y el punto proyectado.
+  /// Radio de tolerancia: 30 px.
+  (int, LatLng) _encontrarSegmentoMasCercano(
+      LatLng tapPoint, List<LatLng> verts,
+      {required bool esCerrado, required MapCamera camera}) {
+    final tapPx = camera.getOffsetFromOrigin(tapPoint);
+    const tolerancePx = 30.0;
+    double bestDist = double.infinity;
+    int bestIndex = -1;
+    LatLng bestSnap = tapPoint;
+
+    final n = verts.length;
+    final segments = esCerrado ? n : n - 1;
+
+    for (int i = 0; i < segments; i++) {
+      final p1 = verts[i];
+      final p2 = verts[(i + 1) % n];
+      final p1Px = camera.getOffsetFromOrigin(p1);
+      final p2Px = camera.getOffsetFromOrigin(p2);
+
+      final dx = p2Px.dx - p1Px.dx;
+      final dy = p2Px.dy - p1Px.dy;
+      final len2 = dx * dx + dy * dy;
+      if (len2 < 1e-6) continue;
+
+      final cx = tapPx.dx - p1Px.dx;
+      final cy = tapPx.dy - p1Px.dy;
+      final t = ((cx * dx + cy * dy) / len2).clamp(0.0, 1.0);
+
+      final projX = p1Px.dx + t * dx;
+      final projY = p1Px.dy + t * dy;
+      final dist = math.sqrt(math.pow(tapPx.dx - projX, 2) +
+                             math.pow(tapPx.dy - projY, 2));
+
+      if (dist <= tolerancePx && dist < bestDist) {
+        bestDist = dist;
+        bestIndex = i;
+        final snapLat = p1.latitude + t * (p2.latitude - p1.latitude);
+        final snapLng = p1.longitude + t * (p2.longitude - p1.longitude);
+        bestSnap = LatLng(snapLat, snapLng);
+      }
+    }
+    return (bestIndex, bestSnap);
+  }
+
   // ── Modo edición global ───────────────────────────────────────────────
   /// Controla si las capas permiten edición (eliminar, mover, cortar).
   /// Por defecto: false (modo solo lectura/navegación).
   bool _modoEdicion = false;
   bool get modoEdicion => _modoEdicion;
+
+  // ── Capa activa seleccionada en panel ──────────────────────────────────
+  String? _capaActivaId = '1'; // '1': estructuras, '2': caminos, '3': upms
+  String? get capaActivaId => _capaActivaId;
+  void setCapaActiva(String? id) {
+    _capaActivaId = id;
+    notifyListeners();
+  }
+
+  /// Retorna verdadero si el usuario en sesión es el creador del elemento (propietario_elemento).
+  bool esPropietario(String? createdBy, String? currentUserId) {
+    if (createdBy == null || currentUserId == null) return false;
+    return createdBy == currentUserId;
+  }
 
   // ── Visibilidad de capas de geometrías ──────────────────────────────────
   bool _mostrarPuntos = true;
@@ -209,6 +356,15 @@ class DigitalizacionController extends ChangeNotifier {
       _cancelarConstruccion();
       _modo = ModoDigitalizacion.navegar;
       _idSeleccionado = null;
+    } else {
+      // Al entrar a modo edición, activa el modo de digitalización correspondiente a la capa activa
+      if (_capaActivaId == '1') {
+        _modo = ModoDigitalizacion.punto;
+      } else if (_capaActivaId == '2') {
+        _modo = ModoDigitalizacion.linea;
+      } else if (_capaActivaId == '3') {
+        _modo = ModoDigitalizacion.poligono;
+      }
     }
     notifyListeners();
   }
@@ -512,6 +668,27 @@ class DigitalizacionController extends ChangeNotifier {
     });
   }
 
+  /// Registra un punto en memoria + SQLite localmente, SIN enviarlo a PostGIS.
+  ///
+  /// Usar cuando se quiere que el punto aparezca en el mapa inmediatamente
+  /// (mientras el usuario llena el formulario de atributos) pero evitar la
+  /// llamada al backend hasta tener los datos completos — así se garantiza que
+  /// PostGIS recibe el INSERT solo una vez y sync_version queda en 0.
+  void crearPuntoDraft(PuntoEstructura punto) {
+    puntos.add(punto);
+    notifyListeners();
+    DatabaseHelper().saveEstructuraCompleta(punto);
+    // NO se llama a PostGISService aquí. Se llamará en actualizarPunto().
+  }
+
+  /// Descarta un punto borrador (draft) en memoria y en SQLite cuando el usuario presiona "Cancelar".
+  void descartarPuntoDraft(String id) {
+    puntos.removeWhere((p) => p.id == id);
+    DatabaseHelper().deleteEntity('estructuras', id);
+    if (_idSeleccionado == id) _idSeleccionado = null;
+    notifyListeners();
+  }
+
   /// Finaliza la línea en construcción y la agrega a la colección.
   void finalizarLinea({
     required String nombre,
@@ -702,9 +879,10 @@ class DigitalizacionController extends ChangeNotifier {
   ResultadoSeleccion buscarEntidadCercana(LatLng tapPoint, MapCamera camera) {
     final tapPx = camera.getOffsetFromOrigin(tapPoint);
     const tolerancePx = snapRadiusPx; // 12.0 px
+    final soloCapaActiva = _capaActivaId != null;
 
-    // 1. Buscar en PUNTOS (mayor prioridad)
-    if (_mostrarPuntos) {
+    // 1. Buscar en PUNTOS (solo si capa activa es '1' o no hay capa activa)
+    if (_mostrarPuntos && (!soloCapaActiva || _capaActivaId == '1')) {
       double minPuntoDist = double.infinity;
       PuntoEstructura? closestPunto;
       for (final punto in puntos) {
@@ -722,8 +900,8 @@ class DigitalizacionController extends ChangeNotifier {
       }
     }
 
-    // 2. Buscar en LÍNEAS
-    if (_mostrarLineas) {
+    // 2. Buscar en LÍNEAS (solo si capa activa es '2' o no hay capa activa)
+    if (_mostrarLineas && (!soloCapaActiva || _capaActivaId == '2')) {
       double minLineaDist = double.infinity;
       LineaCamino? closestLinea;
       for (final linea in lineas) {
@@ -743,8 +921,8 @@ class DigitalizacionController extends ChangeNotifier {
       }
     }
 
-    // 3. Buscar en POLÍGONOS (Punto dentro del polígono O cerca del borde en 12px)
-    if (_mostrarPoligonos) {
+    // 3. Buscar en POLÍGONOS (solo si capa activa es '3' o no hay capa activa)
+    if (_mostrarPoligonos && (!soloCapaActiva || _capaActivaId == '3')) {
       double minPolDist = double.infinity;
       PoligonoUPM? closestPoligono;
 
@@ -888,6 +1066,10 @@ class DigitalizacionController extends ChangeNotifier {
       codigoUPM: original.codigoUPM,
       notas: original.notas,
       fechaCreacion: original.fechaCreacion,
+      createdBy: original.createdBy,
+      updatedBy: original.updatedBy,
+      deviceId: original.deviceId,
+      syncVersion: original.syncVersion,
     );
 
     poligonos[index] = modificada;
@@ -960,7 +1142,58 @@ class DigitalizacionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Stack de deshacer para inserción de vértices
+  final List<(String id, int indexInsertado)> _historialInsercionVertices = [];
+  bool get puedeDeshacerInsercionVertice => _historialInsercionVertices.isNotEmpty;
+
+  /// Deshace la última inserción de vértice realizada en modo edición.
+  bool deshacerUltimaInsercionVertice() {
+    if (_historialInsercionVertices.isEmpty) return false;
+    final (id, indexInsertado) = _historialInsercionVertices.removeLast();
+
+    if (_modo == ModoDigitalizacion.editarLinea) {
+      final lineaIndex = lineas.indexWhere((l) => l.id == id);
+      if (lineaIndex != -1) {
+        final original = lineas[lineaIndex];
+        if (indexInsertado >= 0 && indexInsertado < original.vertices.length && original.vertices.length > 2) {
+          final nuevosVerts = List<LatLng>.from(original.vertices);
+          nuevosVerts.removeAt(indexInsertado);
+          final modificada = LineaCamino(
+            id: original.id,
+            vertices: nuevosVerts,
+            nombre: original.nombre,
+            tipo: original.tipo,
+            notas: original.notas,
+            fechaCreacion: original.fechaCreacion,
+            createdBy: original.createdBy,
+            updatedBy: original.updatedBy,
+            deviceId: original.deviceId,
+            syncVersion: original.syncVersion,
+          );
+          lineas[lineaIndex] = modificada;
+          DatabaseHelper().insertEntity('caminos', modificada.toMapDB());
+          _ultimoMensaje = '↩ Vértice removido de la línea';
+          notifyListeners();
+          return true;
+        }
+      }
+    } else if (_modo == ModoDigitalizacion.editarPoligono) {
+      if (_idPoligonoEditando == id &&
+          indexInsertado >= 0 &&
+          indexInsertado < _verticesPoligonoEdicion.length &&
+          _verticesPoligonoEdicion.length > 3) {
+        _verticesPoligonoEdicion.removeAt(indexInsertado);
+        _ultimoMensaje = '↩ Vértice removido del polígono';
+        notifyListeners();
+        return true;
+      }
+    }
+    return false;
+  }
+
   void cancelarEdicionPoligono() {
+    _modoAgregarVertice = false;
+    _historialInsercionVertices.clear();
     _dragPoligonoActivo = false;
     _indiceDragPoligonoActivo = null;
     _posicionDragPoligonoTemporal = null;
@@ -987,6 +1220,10 @@ class DigitalizacionController extends ChangeNotifier {
       codigoUPM: codigoUPM,
       notas: original.notas,
       fechaCreacion: original.fechaCreacion,
+      createdBy: original.createdBy,
+      updatedBy: original.updatedBy,
+      deviceId: original.deviceId,
+      syncVersion: original.syncVersion,
     );
 
     poligonos[index] = modificada;
@@ -1052,6 +1289,10 @@ class DigitalizacionController extends ChangeNotifier {
       tipo: tipo,
       notas: original.notas,
       fechaCreacion: original.fechaCreacion,
+      createdBy: original.createdBy,
+      updatedBy: original.updatedBy,
+      deviceId: original.deviceId,
+      syncVersion: original.syncVersion,
     );
 
     lineas[index] = modificada;
@@ -1075,6 +1316,10 @@ class DigitalizacionController extends ChangeNotifier {
       tipo: original.tipo,
       notas: original.notas,
       fechaCreacion: original.fechaCreacion,
+      createdBy: original.createdBy,
+      updatedBy: original.updatedBy,
+      deviceId: original.deviceId,
+      syncVersion: original.syncVersion,
     );
 
     lineas[index] = modificada;
@@ -1121,6 +1366,10 @@ class DigitalizacionController extends ChangeNotifier {
         tipo: original.tipo,
         notas: original.notas,
         fechaCreacion: original.fechaCreacion,
+        createdBy: original.createdBy,
+        updatedBy: original.updatedBy,
+        deviceId: original.deviceId,
+        syncVersion: original.syncVersion,
       );
 
       lineas[lineaIndex] = modificada;
@@ -1144,6 +1393,8 @@ class DigitalizacionController extends ChangeNotifier {
   }
 
   void cancelarEdicionLinea() {
+    _modoAgregarVertice = false;
+    _historialInsercionVertices.clear();
     _dragLineaActivo = false;
     _indiceDragLineaActivo = null;
     _posicionDragLineaTemporal = null;
@@ -1191,6 +1442,11 @@ class DigitalizacionController extends ChangeNotifier {
         nivelesCantidad: original.nivelesCantidad,
         notas: original.notas,
         niveles: original.niveles,
+        fechaCreacion: original.fechaCreacion,
+        createdBy: original.createdBy,
+        updatedBy: original.updatedBy,
+        deviceId: original.deviceId,
+        syncVersion: original.syncVersion,
         updatedAt: DateTime.now(),
         syncDirty: true,
       );
@@ -1555,6 +1811,10 @@ class DigitalizacionController extends ChangeNotifier {
               nombre: 'UPM',
               updatedAt: DateTime.parse(u['updated_at'] as String),
               syncDirty: u['sync_dirty'] == 1,
+              createdBy: u['created_by'] as String?,
+              updatedBy: u['updated_by'] as String?,
+              deviceId: u['device_id'] as String?,
+              syncVersion: (u['sync_version'] as num?)?.toInt() ?? 0,
             ));
           }
         }
@@ -1587,6 +1847,10 @@ class DigitalizacionController extends ChangeNotifier {
               nombre: 'Camino',
               updatedAt: DateTime.parse(c['updated_at'] as String),
               syncDirty: c['sync_dirty'] == 1,
+              createdBy: c['created_by'] as String?,
+              updatedBy: c['updated_by'] as String?,
+              deviceId: c['device_id'] as String?,
+              syncVersion: (c['sync_version'] as num?)?.toInt() ?? 0,
             ));
           }
         }

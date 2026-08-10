@@ -204,9 +204,11 @@ class PanelEdicionLinea extends StatelessWidget {
           Text(
             enDrag
                 ? 'Moviendo vértice ${digCtrl.indiceDragLineaActivo! + 1}'
-                : 'Arrastra un nodo para moverlo',
-            style: const TextStyle(
-              color: Color(0xFF4FC3F7),
+                : (digCtrl.modoAgregarVertice
+                    ? '➕ Toca sobre un segmento para agregar vértice'
+                    : 'Arrastra un nodo para moverlo'),
+            style: TextStyle(
+              color: digCtrl.modoAgregarVertice ? const Color(0xFF26C6DA) : const Color(0xFF4FC3F7),
               fontSize: 13,
               fontWeight: FontWeight.bold,
             ),
@@ -285,9 +287,13 @@ class PanelEdicionPoligono extends StatelessWidget {
                 ? (autoIntersecta
                     ? '⚠️ Auto-intersección detectada'
                     : 'Moviendo vértice ${digCtrl.indiceDragPoligonoActivo! + 1}')
-                : 'Arrastra un nodo para moverlo',
+                : (digCtrl.modoAgregarVertice
+                    ? '➕ Toca sobre un segmento para agregar vértice'
+                    : 'Arrastra un nodo para moverlo'),
             style: TextStyle(
-              color: autoIntersecta ? AppTheme.error : const Color(0xFFA5D6A7),
+              color: autoIntersecta
+                  ? AppTheme.error
+                  : (digCtrl.modoAgregarVertice ? const Color(0xFF26C6DA) : const Color(0xFFA5D6A7)),
               fontSize: 13,
               fontWeight: FontWeight.bold,
             ),

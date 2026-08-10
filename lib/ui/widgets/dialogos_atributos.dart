@@ -47,6 +47,7 @@ class DialogoAtributosPunto extends StatefulWidget {
   final int? nivelesInicial;
   final String? notasIniciales;
   final bool soloLectura;
+  final VoidCallback? onAbrirNiveles;
 
   const DialogoAtributosPunto({
     super.key,
@@ -60,6 +61,7 @@ class DialogoAtributosPunto extends StatefulWidget {
     this.nivelesInicial,
     this.notasIniciales,
     this.soloLectura = false,
+    this.onAbrirNiveles,
   });
 
   bool get esModoEdicion => nombreInicial != null;
@@ -310,8 +312,9 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                   notas: _notasCtrl.text.trim(),
                 ) as AtributosPuntoResult);
               },
-              labelConfirmar: esModoEdicion ? 'Guardar Cambios' : 'Crear Estructura',
+              labelConfirmar: esModoEdicion ? 'Guardar Cambios' : 'Ingresar información',
               soloLectura: soloLectura,
+              onAbrirNiveles: widget.onAbrirNiveles,
             ),
           ],
         ),
@@ -651,6 +654,7 @@ Widget _buildFooter({
   required VoidCallback onConfirmar,
   required String labelConfirmar,
   bool soloLectura = false,
+  VoidCallback? onAbrirNiveles,
 }) {
   return Container(
     padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
@@ -658,32 +662,52 @@ Widget _buildFooter({
       color: AppTheme.surfaceVariant,
       borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
     ),
-    child: soloLectura
-        ? SizedBox(
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (onAbrirNiveles != null) ...[
+          SizedBox(
             width: double.infinity,
-            child: OutlinedButton(
-              onPressed: onCancelar,
-              child: const Text('Cerrar'),
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.account_tree_outlined, size: 16),
+              label: const Text('Gestionar Niveles', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF4FC3F7),
+                foregroundColor: Colors.white,
+              ),
+              onPressed: onAbrirNiveles,
             ),
-          )
-        : Row(
-            children: [
-              Expanded(
+          ),
+          const SizedBox(height: 10),
+        ],
+        soloLectura
+            ? SizedBox(
+                width: double.infinity,
                 child: OutlinedButton(
                   onPressed: onCancelar,
-                  child: const Text('Cancelar'),
+                  child: const Text('Cerrar'),
                 ),
+              )
+            : Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: onCancelar,
+                      child: const Text('Cancelar'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton(
+                      onPressed: onConfirmar,
+                      child: Text(labelConfirmar),
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                flex: 2,
-                child: ElevatedButton(
-                  onPressed: onConfirmar,
-                  child: Text(labelConfirmar),
-                ),
-              ),
-            ],
-          ),
+      ],
+    ),
   );
 }
 

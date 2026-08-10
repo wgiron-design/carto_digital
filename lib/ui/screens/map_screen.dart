@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -202,6 +201,32 @@ class _MapScreenState extends State<MapScreen> {
                       ],
                       // Herramientas de digitalización
                       BarraHerramientas(digCtrl: digCtrl),
+                      // Botón "Agregar Vértice" — visible solo en editarLinea / editarPoligono
+                      if (digCtrl.modo == ModoDigitalizacion.editarLinea ||
+                          digCtrl.modo == ModoDigitalizacion.editarPoligono) ...[
+                        const SizedBox(height: 4),
+                        Container(width: 36, height: 1, color: const Color(0xFF26C6DA).withOpacity(0.5)),
+                        const SizedBox(height: 4),
+                        _MapActionBtn(
+                          icon: Icons.add_location_alt_outlined,
+                          tooltip: 'Agregar vértice (toca un segmento)',
+                          activo: digCtrl.modoAgregarVertice,
+                          color: const Color(0xFF26C6DA),
+                          habilitado: !digCtrl.dragLineaActivo && !digCtrl.dragPoligonoActivo,
+                          onTap: () => digCtrl.toggleModoAgregarVertice(),
+                        ),
+                        if (digCtrl.puedeDeshacerInsercionVertice) ...[
+                          const SizedBox(height: 4),
+                          _MapActionBtn(
+                            icon: Icons.undo,
+                            tooltip: 'Deshacer último vértice agregado',
+                            activo: false,
+                            color: const Color(0xFF26C6DA),
+                            habilitado: true,
+                            onTap: () => digCtrl.deshacerUltimaInsercionVertice(),
+                          ),
+                        ],
+                      ],
                     ],
                   ],
                 ),
@@ -231,6 +256,10 @@ class _MapScreenState extends State<MapScreen> {
                    (digCtrl.modo == ModoDigitalizacion.editarLinea && digCtrl.verticeEdicionIndex != null) ||
                    (digCtrl.modo == ModoDigitalizacion.editarPoligono && digCtrl.verticePoligonoIndex != null)))
                 const CursorCrosshair(),
+
+              // ── Overlay de modo Agregar Vértice ────────────────────────
+              if (digCtrl.modoAgregarVertice)
+                const _CursorAgregarVertice(),
 
               // ── Indicador visual de snap ───────────────────────────────────
               // Cuadrito rosa = snap a vértice exacto.
@@ -483,6 +512,21 @@ class _MapScreenState extends State<MapScreen> {
         onTap: (tapPosition, point) {
           setState(() => _coordsCursor = point);
 
+          // ── Modo Agregar Vértice: insertar sobre segmento ─────────────────────
+          if (digCtrl.modoAgregarVertice) {
+            final exito = digCtrl.insertarVerticeSobreSegmento(point, _flutterMapCtrl.camera);
+            if (!exito && mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('ℹ️ Toca sobre un segmento de la geometría'),
+                  backgroundColor: Color(0xFF26C6DA),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            }
+            return;
+          }
+
           // ── Modo Cortar Línea: selección silenciosa, sin abrir sheet ─────
           // Si ya hay una línea seleccionada, el tap no interrumpe el trazado.
           if (digCtrl.modo == ModoDigitalizacion.cortarLinea) {
@@ -505,8 +549,15 @@ class _MapScreenState extends State<MapScreen> {
             return;
           }
 
-          // ── Modo Navegar: selección unificada de entidades (12px) ──────
-          if (digCtrl.modo == ModoDigitalizacion.navegar) {
+          // ── Selección Unificada de Entidades (Puntos, Líneas, Polígonos) ──────
+          // Permite seleccionar elementos existentes siempre que no se esté digitalizando (sin vértices en construcción)
+          final esModoPermiteSeleccion = digCtrl.modo == ModoDigitalizacion.navegar ||
+              ((digCtrl.modo == ModoDigitalizacion.punto ||
+                digCtrl.modo == ModoDigitalizacion.linea ||
+                digCtrl.modo == ModoDigitalizacion.poligono) &&
+               digCtrl.verticesEnConstruccion.isEmpty);
+
+          if (esModoPermiteSeleccion) {
             final res = digCtrl.buscarEntidadCercana(point, _flutterMapCtrl.camera);
             switch (res) {
               case PuntoSeleccionado(:final punto):
@@ -528,15 +579,19 @@ class _MapScreenState extends State<MapScreen> {
             }
           }
 
-          // En modo línea/polígono/edición los nodos se agregan/mueven con paneles flotantes
+          // En modo línea/polígono/edición con vértices o en edición activa los taps se manejan por sus herramientas/paneles
           if (digCtrl.modo == ModoDigitalizacion.linea || 
               digCtrl.modo == ModoDigitalizacion.poligono ||
               digCtrl.modo == ModoDigitalizacion.cortarLinea || 
               digCtrl.modo == ModoDigitalizacion.editarLinea ||
-              digCtrl.modo == ModoDigitalizacion.editarPoligono) return;
+              digCtrl.modo == ModoDigitalizacion.editarPoligono) {
+            return;
+          }
               
           final resultado = digCtrl.procesarTap(point);
           if (resultado != null && digCtrl.modo == ModoDigitalizacion.punto) {
+            // No se hace await aquí porque onTap es síncrono.
+            // unawaited permite el flujo async sin bloquear el widget tree.
             _mostrarFormularioPunto(context, digCtrl, resultado);
           }
         },
@@ -687,34 +742,28 @@ class _MapScreenState extends State<MapScreen> {
                       ),
                     ),
                   )
-                : GestureDetector(
-                    onTap: () {
-                      digCtrl.seleccionar(punto.id);
-                      _mostrarInfoPunto(context, punto, digCtrl);
-                    },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: seleccionado
-                            ? const Color(0xFF4FC3F7).withOpacity(0.9)
-                            : const Color(0xFF4FC3F7).withOpacity(0.85),
-                        border: Border.all(
-                          color: Colors.white,
-                          width: seleccionado ? 3 : 2,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: const Color(0xFF4FC3F7).withOpacity(0.5),
-                            blurRadius: seleccionado ? 12 : 6,
-                          ),
-                        ],
+                : AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: seleccionado
+                          ? const Color(0xFF4FC3F7).withOpacity(0.9)
+                          : const Color(0xFF4FC3F7).withOpacity(0.85),
+                      border: Border.all(
+                        color: Colors.white,
+                        width: seleccionado ? 3 : 2,
                       ),
-                      child: Center(
-                        child: Text(
-                          punto.emojiActivo,
-                          style: TextStyle(fontSize: seleccionado ? 18 : 14),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF4FC3F7).withOpacity(0.5),
+                          blurRadius: seleccionado ? 12 : 6,
                         ),
+                      ],
+                    ),
+                    child: Center(
+                      child: Text(
+                        punto.emojiActivo,
+                        style: TextStyle(fontSize: seleccionado ? 18 : 14),
                       ),
                     ),
                   ),
@@ -1010,41 +1059,93 @@ class _MapScreenState extends State<MapScreen> {
   Future<void> _mostrarFormularioPunto(
       BuildContext context, DigitalizacionController digCtrl, LatLng punto) async {
     final auth = Provider.of<AuthController>(context, listen: false);
+
+    // ── PASO 1: Crear el punto INMEDIATAMENTE con datos mínimos ──────────────
+    // Esto garantiza que la geometría queda en BD desde el primer tap,
+    // independientemente de si el usuario completa el formulario.
+    final puntoBase = PuntoEstructura.nuevo(
+      coordenadas: punto,
+      nombre: '',  // nombre vacío inicial
+      categoria: CategoriaEstructura.formal,
+      tipoFormal: TipoEstructuraFormal.vivienda,
+      tipoReferencia: null,
+      estado: EstadoEstructura.presente,
+      nivelesCantidad: 1,
+      notas: '',
+      createdBy: auth.currentUserId,
+      deviceId: auth.deviceId,
+    );
+
+    // ── PASO 1: Registrar el punto localmente (SQLite) ANTES de abrir formulario.
+    // Se usa crearPuntoDraft — NO envía a PostGIS aún, evitando que la posterior
+    // llamada a actualizarPunto dispare el ON CONFLICT que incrementaría sync_version.
+    digCtrl.crearPuntoDraft(puntoBase);
+
+    // ── PASO 2: Mostrar formulario de atributos ───────────────────────────────
+    if (!mounted) return;
     final result = await showDialog<AtributosPuntoResult>(
       context: context,
+      barrierDismissible: false,   // evita cierre accidental con tap fuera
       builder: (_) => DialogoAtributosPunto(
         lat: punto.latitude,
         lng: punto.longitude,
       ),
     );
 
+    // ── PASO 3: Actualizar el punto con los atributos ingresados ─────────────
     if (result != null) {
-      digCtrl.crearPunto(
-        PuntoEstructura.nuevo(
-          coordenadas: punto,
-          nombre: result.nombre,
-          categoria: result.categoria,
-          tipoFormal: result.tipoFormal,
-          tipoReferencia: result.tipoReferencia,
-          estado: result.estado,
-          nivelesCantidad: result.nivelesCantidad,
-          notas: result.notas,
-          createdBy: auth.currentUserId,
-          deviceId: auth.deviceId,
-        ),
-        createdBy: auth.currentUserId,
-        deviceId: auth.deviceId,
+      final puntoActualizado = PuntoEstructura(
+        id: puntoBase.id,
+        coordenadas: puntoBase.coordenadas,
+        nombre: result.nombre,
+        categoria: result.categoria,
+        tipoFormal: result.tipoFormal,
+        tipoReferencia: result.tipoReferencia,
+        estado: result.estado,
+        nivelesCantidad: result.nivelesCantidad,
+        notas: result.notas,
+        fechaCreacion: puntoBase.fechaCreacion,
+        updatedAt: DateTime.now(),
+        syncDirty: true,
+        createdBy: puntoBase.createdBy,
+        updatedBy: auth.currentUserId,
+        deviceId: puntoBase.deviceId,
+        syncVersion: puntoBase.syncVersion,
+        niveles: puntoBase.niveles,
       );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Estructura "${result.nombre}" creada'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
-      }
+
+      // Persistir actualización de atributos
+      digCtrl.actualizarPunto(puntoActualizado);
+
+      // ── PASO 4: Navegar a JerarquiaScreen ────────────────────────────────
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ Estructura "${result.nombre}" guardada. Abriendo niveles...'),
+          backgroundColor: AppTheme.success,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+
+      // Usar pushReplacement para evitar acumulación de pantallas si se repite
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => JerarquiaScreen(puntoInicial: puntoActualizado),
+        ),
+      );
+    } else {
+      // Usuario canceló el formulario: se descarta el punto borrador de SQLite y memoria
+      digCtrl.descartarPuntoDraft(puntoBase.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('❌ Creación de estructura cancelada.'),
+          backgroundColor: Color(0xFF546E7A),
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
-    // Si cancela, el modo sigue en Punto para seguir digitalizando
   }
 
   Future<void> _mostrarFormularioLinea(
@@ -1168,6 +1269,11 @@ class _MapScreenState extends State<MapScreen> {
                     ],
                   ),
                 ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Color(0xFF90A4AE), size: 22),
+                  tooltip: 'Cerrar',
+                  onPressed: () => Navigator.pop(context),
+                ),
               ],
             ),
 
@@ -1234,159 +1340,171 @@ class _MapScreenState extends State<MapScreen> {
 
             const SizedBox(height: 16),
 
-            // Acciones — solo visibles en modo Edición (excepto Gestionar Niveles)
+            // Acciones — solo visibles en modo Edición (excepto Niveles)
             if (digCtrl.modoEdicion) ...[
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.open_with, size: 16),
-                  label: const Text('Mover', style: TextStyle(fontSize: 12)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4FC3F7),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: () {
-                    Navigator.pop(context);
-                    digCtrl.iniciarDragPunto(punto.id);
-                  },
-                ),
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.delete_outline, size: 16),
-                      label: const Text('Eliminar', style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.error,
-                        side: const BorderSide(color: AppTheme.error),
-                      ),
-                      onPressed: () {
-                        final auth = Provider.of<AuthController>(context, listen: false);
-                        digCtrl.eliminarPunto(punto.id, updatedBy: auth.currentUserId);
-                        Navigator.pop(context);
-                      },
+              Builder(builder: (context) {
+                final auth = Provider.of<AuthController>(context, listen: false);
+                final esPropietario = digCtrl.esPropietario(punto.createdBy, auth.currentUserId);
+                void mostrarMensajeNoPropietario() {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Ud. no creo este elemento, no tiene permisos de edición'),
+                      backgroundColor: AppTheme.warning,
+                      duration: Duration(seconds: 3),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.edit_outlined, size: 16),
-                      label: const Text('Editar', style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFFFFB74D),
-                        side: const BorderSide(color: Color(0xFFFFB74D)),
+                  );
+                }
+
+                return Column(
+                  children: [
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.open_with, size: 16),
+                        label: const Text('Mover', style: TextStyle(fontSize: 12)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: esPropietario ? const Color(0xFF4FC3F7) : Colors.grey.shade700,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () {
+                          if (!esPropietario) {
+                            mostrarMensajeNoPropietario();
+                            return;
+                          }
+                          Navigator.pop(context);
+                          digCtrl.iniciarDragPunto(punto.id);
+                        },
                       ),
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        final result = await showDialog<AtributosPuntoResult>(
-                          context: context,
-                          builder: (_) => DialogoAtributosPunto(
-                            lat: punto.coordenadas.latitude,
-                            lng: punto.coordenadas.longitude,
-                            nombreInicial: punto.nombre,
-                            categoriaInicial: punto.categoria,
-                            tipoFormalInicial: punto.tipoFormal,
-                            tipoReferenciaInicial: punto.tipoReferencia,
-                            estadoInicial: punto.estado,
-                            nivelesInicial: punto.nivelesCantidad,
-                            notasIniciales: punto.notas,
-                          ),
-                        );
-                        if (result != null && mounted) {
-                          final puntoEditado = PuntoEstructura(
-                            id: punto.id,
-                            coordenadas: punto.coordenadas,
-                            nombre: result.nombre,
-                            categoria: result.categoria,
-                            tipoFormal: result.tipoFormal,
-                            tipoReferencia: result.tipoReferencia,
-                            estado: result.estado,
-                            nivelesCantidad: result.nivelesCantidad,
-                            notas: result.notas,
-                            niveles: punto.niveles,
-                            updatedAt: DateTime.now(),
-                            syncDirty: true,
-                          );
-                          digCtrl.actualizarPunto(puntoEditado);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('✅ Estructura "${result.nombre}" actualizada'),
-                              backgroundColor: AppTheme.success,
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.delete_outline, size: 16),
+                            label: const Text('Eliminar', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: esPropietario ? AppTheme.error : Colors.grey,
+                              side: BorderSide(color: esPropietario ? AppTheme.error : Colors.grey),
                             ),
-                          );
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    flex: 2,
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.account_tree_outlined, size: 16),
-                      label: const Text('Gestionar', style: TextStyle(fontSize: 12)),
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => JerarquiaScreen(puntoInicial: punto),
+                            onPressed: () {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                                return;
+                              }
+                              digCtrl.eliminarPunto(punto.id, updatedBy: auth.currentUserId);
+                              Navigator.pop(context);
+                            },
                           ),
-                        );
-                      },
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.edit_outlined, size: 16),
+                            label: const Text('Editar', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: esPropietario ? const Color(0xFFFFB74D) : Colors.grey,
+                              side: BorderSide(color: esPropietario ? const Color(0xFFFFB74D) : Colors.grey),
+                            ),
+                            onPressed: () async {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                                return;
+                              }
+                              Navigator.pop(context);
+                              final result = await showDialog<AtributosPuntoResult>(
+                                context: context,
+                                builder: (_) => DialogoAtributosPunto(
+                                  lat: punto.coordenadas.latitude,
+                                  lng: punto.coordenadas.longitude,
+                                  nombreInicial: punto.nombre,
+                                  categoriaInicial: punto.categoria,
+                                  tipoFormalInicial: punto.tipoFormal,
+                                  tipoReferenciaInicial: punto.tipoReferencia,
+                                  estadoInicial: punto.estado,
+                                  nivelesInicial: punto.nivelesCantidad,
+                                  notasIniciales: punto.notas,
+                                  soloLectura: !esPropietario,
+                                  onAbrirNiveles: () async {
+                                    Navigator.pop(context);
+                                    await Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => JerarquiaScreen(puntoInicial: punto),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              );
+                              if (result != null && mounted && esPropietario) {
+                                final puntoEditado = PuntoEstructura(
+                                  id: punto.id,
+                                  coordenadas: punto.coordenadas,
+                                  nombre: result.nombre,
+                                  categoria: result.categoria,
+                                  tipoFormal: result.tipoFormal,
+                                  tipoReferencia: result.tipoReferencia,
+                                  estado: result.estado,
+                                  nivelesCantidad: result.nivelesCantidad,
+                                  notas: result.notas,
+                                  niveles: punto.niveles,
+                                  updatedAt: DateTime.now(),
+                                  syncDirty: true,
+                                );
+                                digCtrl.actualizarPunto(puntoEditado);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('✅ Estructura "${result.nombre}" actualizada'),
+                                    backgroundColor: AppTheme.success,
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                );
+              }),
             ]
             else
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.info_outline, size: 16),
-                      label: const Text('Ver Atributos', style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.onSurface,
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.info_outline, size: 16),
+                  label: const Text('Ver Atributos', style: TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.onSurface,
+                  ),
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await showDialog<AtributosPuntoResult>(
+                      context: context,
+                      builder: (_) => DialogoAtributosPunto(
+                        lat: punto.coordenadas.latitude,
+                        lng: punto.coordenadas.longitude,
+                        nombreInicial: punto.nombre,
+                        categoriaInicial: punto.categoria,
+                        tipoFormalInicial: punto.tipoFormal,
+                        tipoReferenciaInicial: punto.tipoReferencia,
+                        estadoInicial: punto.estado,
+                        nivelesInicial: punto.nivelesCantidad,
+                        notasIniciales: punto.notas,
+                        soloLectura: true,
+                        onAbrirNiveles: () async {
+                          Navigator.pop(context);
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => JerarquiaScreen(puntoInicial: punto),
+                            ),
+                          );
+                        },
                       ),
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        await showDialog<AtributosPuntoResult>(
-                          context: context,
-                          builder: (_) => DialogoAtributosPunto(
-                            lat: punto.coordenadas.latitude,
-                            lng: punto.coordenadas.longitude,
-                            nombreInicial: punto.nombre,
-                            categoriaInicial: punto.categoria,
-                            tipoFormalInicial: punto.tipoFormal,
-                            tipoReferenciaInicial: punto.tipoReferencia,
-                            estadoInicial: punto.estado,
-                            nivelesInicial: punto.nivelesCantidad,
-                            notasIniciales: punto.notas,
-                            soloLectura: true,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.account_tree_outlined, size: 16),
-                      label: const Text('Gestionar Niveles', style: TextStyle(fontSize: 12)),
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => JerarquiaScreen(puntoInicial: punto),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
+                    );
+                  },
+                ),
               ),
           ],
         ),
@@ -1484,86 +1602,122 @@ class _MapScreenState extends State<MapScreen> {
             // Acciones — solo visibles en modo Edición
             if (digCtrl.modoEdicion) ...[ 
               const SizedBox(height: 20),
-
-              // Acciones principales (Mover, Cortar)
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.edit_road, size: 18, color: Colors.white),
-                      label: const Text('Mover Vértices', style: TextStyle(color: Colors.white, fontSize: 12)),
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4FC3F7)),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        digCtrl.setModo(ModoDigitalizacion.editarLinea);
-                      },
+              Builder(builder: (context) {
+                final auth = Provider.of<AuthController>(context, listen: false);
+                final esPropietario = digCtrl.esPropietario(linea.createdBy, auth.currentUserId);
+                void mostrarMensajeNoPropietario() {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Ud. no creo este elemento, no tiene permisos de edición'),
+                      backgroundColor: AppTheme.warning,
+                      duration: Duration(seconds: 3),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.content_cut, size: 18, color: Colors.white),
-                      label: const Text('Cortar Línea', style: TextStyle(color: Colors.white, fontSize: 12)),
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF9C27B0)),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        digCtrl.setModo(ModoDigitalizacion.cortarLinea);
-                      },
-                    ),
-                  ),
-                ],
-              ),
+                  );
+                }
 
-              const SizedBox(height: 12),
-
-              // Acciones secundarias (Eliminar, Atributos)
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.delete_outline, size: 16),
-                      label: const Text('Eliminar', style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.error,
-                        side: const BorderSide(color: AppTheme.error),
-                      ),
-                      onPressed: () {
-                        final auth = Provider.of<AuthController>(context, listen: false);
-                        digCtrl.eliminarLinea(linea.id, updatedBy: auth.currentUserId);
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.edit, size: 16),
-                      label: const Text('Atributos', style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.onSurface,
-                      ),
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        final result = await showDialog<AtributosLineaResult>(
-                          context: context,
-                          builder: (_) => DialogoAtributosLinea(
-                            numVertices: linea.vertices.length,
-                            longitudM: linea.longitudMetros,
-                            nombreInicial: linea.nombre,
-                            tipoInicial: linea.tipo,
+                return Column(
+                  children: [
+                    // Acciones principales (Mover, Cortar)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: const Icon(Icons.edit_road, size: 18, color: Colors.white),
+                            label: const Text('Mover Vértices', style: TextStyle(color: Colors.white, fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: esPropietario ? const Color(0xFF4FC3F7) : Colors.grey.shade700,
+                            ),
+                            onPressed: () {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                                return;
+                              }
+                              Navigator.pop(context);
+                              digCtrl.setModo(ModoDigitalizacion.editarLinea);
+                            },
                           ),
-                        );
-                        if (result != null) {
-                          digCtrl.actualizarAtributosLineaSeleccionada(
-                            result.nombre,
-                            result.tipo,
-                          );
-                        }
-                      },
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: const Icon(Icons.content_cut, size: 18, color: Colors.white),
+                            label: const Text('Cortar Línea', style: TextStyle(color: Colors.white, fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: esPropietario ? const Color(0xFF9C27B0) : Colors.grey.shade700,
+                            ),
+                            onPressed: () {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                                return;
+                              }
+                              Navigator.pop(context);
+                              digCtrl.setModo(ModoDigitalizacion.cortarLinea);
+                            },
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
+
+                    const SizedBox(height: 12),
+
+                    // Acciones secundarias (Eliminar, Atributos)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.delete_outline, size: 16),
+                            label: const Text('Eliminar', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: esPropietario ? AppTheme.error : Colors.grey,
+                              side: BorderSide(color: esPropietario ? AppTheme.error : Colors.grey),
+                            ),
+                            onPressed: () {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                                return;
+                              }
+                              digCtrl.eliminarLinea(linea.id, updatedBy: auth.currentUserId);
+                              Navigator.pop(context);
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.edit, size: 16),
+                            label: const Text('Atributos', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppTheme.onSurface,
+                            ),
+                            onPressed: () async {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                              }
+                              Navigator.pop(context);
+                              final result = await showDialog<AtributosLineaResult>(
+                                context: context,
+                                builder: (_) => DialogoAtributosLinea(
+                                  numVertices: linea.vertices.length,
+                                  longitudM: linea.longitudMetros,
+                                  nombreInicial: linea.nombre,
+                                  tipoInicial: linea.tipo,
+                                  soloLectura: !esPropietario,
+                                ),
+                              );
+                              if (result != null && esPropietario) {
+                                digCtrl.actualizarAtributosLineaSeleccionada(
+                                  result.nombre,
+                                  result.tipo,
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              }),
             ] else ...[
               const SizedBox(height: 16),
               SizedBox(
@@ -1688,74 +1842,104 @@ class _MapScreenState extends State<MapScreen> {
             // Acciones — solo visibles en modo Edición
             if (digCtrl.modoEdicion) ...[
               const SizedBox(height: 20),
-
-              // Acciones principales (Editar Vértices)
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.edit_location_alt_outlined, size: 18, color: Colors.white),
-                      label: const Text('Editar Vértices', style: TextStyle(color: Colors.white, fontSize: 12)),
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF4CAF50)),
-                      onPressed: () {
-                        Navigator.pop(context);
-                        digCtrl.iniciarEdicionPoligono(poligono.id);
-                      },
+              Builder(builder: (context) {
+                final auth = Provider.of<AuthController>(context, listen: false);
+                final esPropietario = digCtrl.esPropietario(poligono.createdBy, auth.currentUserId);
+                void mostrarMensajeNoPropietario() {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Ud. no creo este elemento, no tiene permisos de edición'),
+                      backgroundColor: AppTheme.warning,
+                      duration: Duration(seconds: 3),
                     ),
-                  ),
-                ],
-              ),
+                  );
+                }
 
-              const SizedBox(height: 12),
-
-              // Acciones secundarias (Eliminar, Atributos)
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.delete_outline, size: 16),
-                      label: const Text('Eliminar', style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.error,
-                        side: const BorderSide(color: AppTheme.error),
-                      ),
-                      onPressed: () {
-                        final auth = Provider.of<AuthController>(context, listen: false);
-                        digCtrl.eliminarPoligono(poligono.id, updatedBy: auth.currentUserId);
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.edit, size: 16),
-                      label: const Text('Atributos', style: TextStyle(fontSize: 12)),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppTheme.onSurface,
-                      ),
-                      onPressed: () async {
-                        Navigator.pop(context);
-                        final result = await showDialog<AtributosPoligonoResult>(
-                          context: context,
-                          builder: (_) => DialogoAtributosPoligono(
-                            numVertices: poligono.vertices.length,
-                            areaMCuad: poligono.areaMetrosCuadrados,
-                            nombreInicial: poligono.nombre,
-                            codigoUPMInicial: poligono.codigoUPM,
+                return Column(
+                  children: [
+                    // Acciones principales (Editar Vértices)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            icon: const Icon(Icons.edit_location_alt_outlined, size: 18, color: Colors.white),
+                            label: const Text('Editar Vértices', style: TextStyle(color: Colors.white, fontSize: 12)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: esPropietario ? const Color(0xFF4CAF50) : Colors.grey.shade700,
+                            ),
+                            onPressed: () {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                                return;
+                              }
+                              Navigator.pop(context);
+                              digCtrl.iniciarEdicionPoligono(poligono.id);
+                            },
                           ),
-                        );
-                        if (result != null) {
-                          digCtrl.actualizarAtributosPoligonoSeleccionado(
-                            result.nombre,
-                            result.codigoUPM,
-                          );
-                        }
-                      },
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ),
+
+                    const SizedBox(height: 12),
+
+                    // Acciones secundarias (Eliminar, Atributos)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.delete_outline, size: 16),
+                            label: const Text('Eliminar', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: esPropietario ? AppTheme.error : Colors.grey,
+                              side: BorderSide(color: esPropietario ? AppTheme.error : Colors.grey),
+                            ),
+                            onPressed: () {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                                return;
+                              }
+                              digCtrl.eliminarPoligono(poligono.id, updatedBy: auth.currentUserId);
+                              Navigator.pop(context);
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.edit, size: 16),
+                            label: const Text('Atributos', style: TextStyle(fontSize: 12)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppTheme.onSurface,
+                            ),
+                            onPressed: () async {
+                              if (!esPropietario) {
+                                mostrarMensajeNoPropietario();
+                              }
+                              Navigator.pop(context);
+                              final result = await showDialog<AtributosPoligonoResult>(
+                                context: context,
+                                builder: (_) => DialogoAtributosPoligono(
+                                  numVertices: poligono.vertices.length,
+                                  areaMCuad: poligono.areaMetrosCuadrados,
+                                  nombreInicial: poligono.nombre,
+                                  codigoUPMInicial: poligono.codigoUPM,
+                                  soloLectura: !esPropietario,
+                                ),
+                              );
+                              if (result != null && esPropietario) {
+                                digCtrl.actualizarAtributosPoligonoSeleccionado(
+                                  result.nombre,
+                                  result.codigoUPM,
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                );
+              }),
             ] else ...[
               const SizedBox(height: 16),
               SizedBox(
@@ -1958,7 +2142,40 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _cerrarAplicacion(
-      BuildContext context, DigitalizacionController digCtrl) async {
+      BuildContext context, DigitalizacionController digCtrl, {bool esCierreDeApp = true}) async {
+    // 4.1 Bloqueo de cierre si el modo edición está activado (solo al intentar salir de la app)
+    if (esCierreDeApp && digCtrl.modoEdicion) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppTheme.surface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.lock_clock, color: Color(0xFFEF5350)),
+              SizedBox(width: 8),
+              Text(
+                'Modo edición activo',
+                style: TextStyle(color: AppTheme.onSurface, fontSize: 16),
+              ),
+            ],
+          ),
+          content: const Text(
+            'Debe desactivar el modo edición antes de salir.',
+            style: TextStyle(color: AppTheme.onSurface),
+          ),
+          actions: [
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Entendido'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
     // 1. Mostrar diálogo de "verificando..." mientras se consulta PostGIS
     showDialog(
       context: context,
@@ -1998,9 +2215,19 @@ class _MapScreenState extends State<MapScreen> {
       return;
     }
 
-    // 4b. Todo guardado → salir directamente sin diálogo
+    // 4b. Todo guardado
     if (faltantes == 0) {
-      _salirDeLaApp();
+      if (esCierreDeApp) {
+        _salirDeLaApp();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ Modo edición desactivado. Todos los datos están sincronizados en PostGIS.'),
+            backgroundColor: AppTheme.success,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
       return;
     }
 
@@ -2272,7 +2499,15 @@ class _MapScreenState extends State<MapScreen> {
                       scale: 0.7,
                       child: Switch(
                         value: digCtrl.modoEdicion,
-                        onChanged: (_) => digCtrl.toggleModoEdicion(),
+                        onChanged: (_) async {
+                          if (digCtrl.modoEdicion) {
+                            // Al cambiar de ON a OFF, desactiva modo edición y ejecuta verificación
+                            digCtrl.toggleModoEdicion();
+                            await _cerrarAplicacion(context, digCtrl, esCierreDeApp: false);
+                          } else {
+                            digCtrl.toggleModoEdicion();
+                          }
+                        },
                         activeColor: const Color(0xFFEF5350),
                       ),
                     ),
@@ -2317,10 +2552,16 @@ class _MapScreenState extends State<MapScreen> {
                   count: digCtrl.puntos.length,
                   color: const Color(0xFF4FC3F7),
                   activo: digCtrl.modo == ModoDigitalizacion.punto,
+                  esCapaActiva: digCtrl.capaActivaId == '1',
                   mostrarLapiz: digCtrl.modoEdicion,
                   visible: digCtrl.mostrarPuntos,
                   onToggleVisibilidad: () => digCtrl.toggleMostrarPuntos(),
-                  onTap: () => digCtrl.setModo(ModoDigitalizacion.punto),
+                  onTap: () {
+                    digCtrl.setCapaActiva('1');
+                    if (digCtrl.modoEdicion) {
+                      digCtrl.setModo(ModoDigitalizacion.punto);
+                    }
+                  },
                 ),
                 const SizedBox(height: 6),
                 _ItemCapaActiva(
@@ -2329,10 +2570,16 @@ class _MapScreenState extends State<MapScreen> {
                   count: digCtrl.lineas.length,
                   color: const Color(0xFFFFB74D),
                   activo: digCtrl.modo == ModoDigitalizacion.linea,
+                  esCapaActiva: digCtrl.capaActivaId == '2',
                   mostrarLapiz: digCtrl.modoEdicion,
                   visible: digCtrl.mostrarLineas,
                   onToggleVisibilidad: () => digCtrl.toggleMostrarLineas(),
-                  onTap: () => digCtrl.setModo(ModoDigitalizacion.linea),
+                  onTap: () {
+                    digCtrl.setCapaActiva('2');
+                    if (digCtrl.modoEdicion) {
+                      digCtrl.setModo(ModoDigitalizacion.linea);
+                    }
+                  },
                 ),
                 const SizedBox(height: 6),
                 _ItemCapaActiva(
@@ -2341,10 +2588,16 @@ class _MapScreenState extends State<MapScreen> {
                   count: digCtrl.poligonos.length,
                   color: const Color(0xFFA5D6A7),
                   activo: digCtrl.modo == ModoDigitalizacion.poligono,
+                  esCapaActiva: digCtrl.capaActivaId == '3',
                   mostrarLapiz: digCtrl.modoEdicion,
                   visible: digCtrl.mostrarPoligonos,
                   onToggleVisibilidad: () => digCtrl.toggleMostrarPoligonos(),
-                  onTap: () => digCtrl.setModo(ModoDigitalizacion.poligono),
+                  onTap: () {
+                    digCtrl.setCapaActiva('3');
+                    if (digCtrl.modoEdicion) {
+                      digCtrl.setModo(ModoDigitalizacion.poligono);
+                    }
+                  },
                 ),
 
                 if (digCtrl.hayGeometrias) ...[
@@ -2611,6 +2864,7 @@ class _ItemCapaActiva extends StatelessWidget {
   final int count;
   final Color color;
   final bool activo;
+  final bool esCapaActiva;
   final bool mostrarLapiz;
   final bool visible;
   final VoidCallback? onToggleVisibilidad;
@@ -2621,6 +2875,7 @@ class _ItemCapaActiva extends StatelessWidget {
     required this.count,
     required this.color,
     required this.activo,
+    this.esCapaActiva = false,
     this.mostrarLapiz = false,
     this.visible = true,
     this.onToggleVisibilidad,
@@ -2635,14 +2890,21 @@ class _ItemCapaActiva extends StatelessWidget {
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
         decoration: BoxDecoration(
-          color: activo ? color.withOpacity(0.12) : AppTheme.surfaceVariant,
+          color: esCapaActiva
+              ? const Color(0xFF4CAF50).withOpacity(0.18)
+              : (activo ? color.withOpacity(0.12) : AppTheme.surfaceVariant),
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: activo ? color.withOpacity(0.6) : Colors.transparent, width: 1.5),
+          border: Border.all(
+            color: esCapaActiva
+                ? const Color(0xFF4CAF50)
+                : (activo ? color.withOpacity(0.6) : Colors.transparent),
+            width: esCapaActiva ? 2.0 : 1.5,
+          ),
         ),
         child: Row(children: [
-          Icon(icon, size: 16, color: activo ? color : AppTheme.onSurface.withOpacity(0.6)),
+          Icon(icon, size: 16, color: esCapaActiva ? const Color(0xFF81C784) : (activo ? color : AppTheme.onSurface.withOpacity(0.6))),
           const SizedBox(width: 8),
-          Expanded(child: Text(label, style: TextStyle(color: activo ? color : AppTheme.onSurface, fontSize: 12, fontWeight: activo ? FontWeight.w600 : FontWeight.normal))),
+          Expanded(child: Text(label, style: TextStyle(color: esCapaActiva ? const Color(0xFF81C784) : (activo ? color : AppTheme.onSurface), fontSize: 12, fontWeight: (esCapaActiva || activo) ? FontWeight.w600 : FontWeight.normal))),
           if (onToggleVisibilidad != null) ...[
             GestureDetector(
               onTap: onToggleVisibilidad,
@@ -2772,6 +3034,38 @@ class _MapActionBtn extends StatelessWidget {
                 : habilitado
                     ? AppTheme.onSurface.withOpacity(0.7)
                     : const Color(0xFF37474F),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CursorAgregarVertice extends StatelessWidget {
+  const _CursorAgregarVertice();
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Center(
+        child: Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xFF26C6DA).withOpacity(0.2),
+            border: Border.all(color: const Color(0xFF26C6DA), width: 2),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF26C6DA).withOpacity(0.4),
+                blurRadius: 8,
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.add,
+            color: Color(0xFF26C6DA),
+            size: 20,
           ),
         ),
       ),

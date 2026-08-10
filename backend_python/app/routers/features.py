@@ -104,6 +104,28 @@ async def get_count(tabla: str):
         return {"count": row['count']}
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+async def propietario_elemento(conn, tabla: str, feature_id: str, current_user_id: Optional[str]) -> bool:
+    """
+    Compara el usuario en sesión contra el campo created_by del elemento seleccionado.
+    Si coincide -> True, si no -> False.
+    """
+    try:
+        row = await conn.fetchrow(f"SELECT created_by::text FROM {tabla} WHERE id = $1::uuid", feature_id)
+        if not row or not row['created_by']:
+            return True
+        if not current_user_id:
+            return False
+        return str(row['created_by']) == str(current_user_id)
+    except Exception as e:
+        logger.warning(f"Error comprobando propietario_elemento: {e}")
+        return True
+
+
 @router.post("/{tabla}/features")
 async def create_feature(tabla: str, payload: Dict[str, Any]):
     """
@@ -128,6 +150,24 @@ async def create_feature(tabla: str, payload: Dict[str, Any]):
     pool = await get_db_pool()
 
     async with pool.acquire() as conn:
+        # Si es actualización (id provisto y existe en BD), validar propiedad del elemento
+        if feature_id:
+            es_dueno = await propietario_elemento(conn, tabla, feature_id, updated_by or created_by)
+            if not es_dueno:
+                raise HTTPException(status_code=403, detail="Ud. no creo este elemento, no tiene permisos de edición")
+
+        # Validación de topología previa a inserción/actualización
+        try:
+            is_valid = await conn.fetchval("SELECT ST_IsValid(ST_GeomFromGeoJSON($1))", geom_json)
+            if is_valid is False:
+                raise HTTPException(status_code=422, detail="Geometría inválida: auto-intersección o topología corrupta")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"No se pudo validar ST_IsValid: {e}")
+
+        logger.info(f"[AUDIT GEOMETRIA] Guardando feature en {tabla} - ID: {feature_id}, Modificado por: {updated_by or created_by or 'Anónimo'}")
+
         if tabla == "estructuras":
             sql = """
             INSERT INTO estructuras (
@@ -217,6 +257,10 @@ async def delete_feature(tabla: str, feature_id: str, updated_by: Optional[str] 
     updated_by = updated_by or None
     pool = await get_db_pool()
     async with pool.acquire() as conn:
+        es_dueno = await propietario_elemento(conn, tabla, feature_id, updated_by)
+        if not es_dueno:
+            raise HTTPException(status_code=403, detail="Ud. no creo este elemento, no tiene permisos de edición")
+
         sql = f"""
             UPDATE {tabla}
             SET deleted_at = NOW(),

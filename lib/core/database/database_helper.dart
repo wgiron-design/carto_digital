@@ -452,6 +452,11 @@ class DatabaseHelper {
         notas: estMap['notas'] as String? ?? '',
         updatedAt: DateTime.parse(estMap['updated_at'] as String),
         syncDirty: estMap['sync_dirty'] == 1,
+        createdBy: estMap['created_by'] as String?,
+        updatedBy: estMap['updated_by'] as String?,
+        deviceId: estMap['device_id'] as String?,
+        syncVersion: (estMap['sync_version'] as num?)?.toInt() ?? 0,
+        deletedAt: estMap['deleted_at'] != null ? DateTime.parse(estMap['deleted_at'] as String) : null,
         niveles: nivelesPorEstructura[estMap['id']] ?? [],
       );
       estructuras.add(estructura);
