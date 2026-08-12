@@ -400,7 +400,7 @@ async def get_catalogos_tipos():
     pool = await get_db_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, nombre, descripcion FROM cat_estructuras_tipo ORDER BY id ASC;"
+            "SELECT id, nombre FROM cat_estructuras_tipo ORDER BY id ASC;"
         )
         return [dict(r) for r in rows]
 
@@ -433,7 +433,7 @@ async def get_catalogos_categorias(
         if tipo is not None:
             # Query parametrizada — nunca concatenar tipo en el SQL
             rows = await conn.fetch(
-                "SELECT id, nombre, tipo, descripcion "
+                "SELECT id, nombre, tipo "
                 "FROM cat_estructuras_categoria "
                 "WHERE tipo = $1 "
                 "ORDER BY nombre ASC;",
@@ -441,7 +441,7 @@ async def get_catalogos_categorias(
             )
         else:
             rows = await conn.fetch(
-                "SELECT id, nombre, tipo, descripcion "
+                "SELECT id, nombre, tipo "
                 "FROM cat_estructuras_categoria "
                 "ORDER BY tipo ASC, nombre ASC;"
             )
