@@ -1,8 +1,9 @@
 import json
 import uuid
 import logging
+import asyncpg
 from fastapi import APIRouter, HTTPException, Query
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 from app.database import get_db_pool
 
@@ -12,6 +13,10 @@ router = APIRouter(prefix="/api/capas", tags=["Geometrias GeoJSON"])
 
 TABLAS_PERMITIDAS = {"estructuras", "caminos", "upms"}
 
+# IDs de tipos válidos en cat_estructuras_tipo (1=Formal, 2=Referencia).
+# Si el catálogo crece, actualizar también esta constante o convertirla en
+# una consulta dinámica al pool en el startup del servidor.
+TIPOS_ESTRUCTURA_VALIDOS: List[int] = [1, 2]
 
 def parse_uuid_or_none(val: Any) -> Optional[str]:
     """Valida y convierte cualquier valor a un string UUID válido o retorna None."""
@@ -26,6 +31,16 @@ def parse_uuid_or_none(val: Any) -> Optional[str]:
         return None
 
 
+def parse_int_or_none(val: Any) -> Optional[int]:
+    """Valida y convierte un valor a entero o retorna None."""
+    if val is None:
+        return None
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return None
+
+
 
 @router.get("/{tabla}/features")
 async def get_features(tabla: str, bbox: Optional[str] = None):
@@ -35,7 +50,7 @@ async def get_features(tabla: str, bbox: Optional[str] = None):
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        where_parts = ["deleted_at IS NULL"]
+        where_parts = ["t.deleted_at IS NULL"]
         args = []
         arg_idx = 1
 
@@ -44,7 +59,7 @@ async def get_features(tabla: str, bbox: Optional[str] = None):
                 parts = [float(x) for x in bbox.split(",")]
                 if len(parts) == 4:
                     where_parts.append(
-                        f"ST_Intersects(geom, ST_MakeEnvelope(${arg_idx}, ${arg_idx+1}, ${arg_idx+2}, ${arg_idx+3}, 4326))"
+                        f"ST_Intersects(t.geom, ST_MakeEnvelope(${arg_idx}, ${arg_idx+1}, ${arg_idx+2}, ${arg_idx+3}, 4326))"
                     )
                     args.extend(parts)
                     arg_idx += 4
@@ -53,20 +68,42 @@ async def get_features(tabla: str, bbox: Optional[str] = None):
 
         where_clause = "WHERE " + " AND ".join(where_parts)
 
-        sql = f"""
-        SELECT json_build_object(
-            'type', 'FeatureCollection',
-            'features', COALESCE(json_agg(
-                json_build_object(
-                    'type', 'Feature',
-                    'id', id::text,
-                    'geometry', ST_AsGeoJSON(geom)::json,
-                    'properties', to_jsonb(t.*) - 'geom'
-                )
-            ), '[]'::json)
-        ) AS geojson
-        FROM {tabla} t {where_clause};
-        """
+        if tabla == "estructuras":
+            sql = f"""
+            SELECT json_build_object(
+                'type', 'FeatureCollection',
+                'features', COALESCE(json_agg(
+                    json_build_object(
+                        'type', 'Feature',
+                        'id', t.id::text,
+                        'geometry', ST_AsGeoJSON(t.geom)::json,
+                        'properties', (to_jsonb(t.*) - 'geom') || jsonb_build_object(
+                            'nombre_categoria', c.nombre,
+                            'nombre_tipo', tp.nombre
+                        )
+                    )
+                ), '[]'::json)
+            ) AS geojson
+            FROM estructuras t
+            LEFT JOIN cat_estructuras_categoria c ON c.id = t.id_categoria
+            LEFT JOIN cat_estructuras_tipo tp ON tp.id = t.id_tipo
+            {where_clause};
+            """
+        else:
+            sql = f"""
+            SELECT json_build_object(
+                'type', 'FeatureCollection',
+                'features', COALESCE(json_agg(
+                    json_build_object(
+                        'type', 'Feature',
+                        'id', id::text,
+                        'geometry', ST_AsGeoJSON(geom)::json,
+                        'properties', to_jsonb(t.*) - 'geom'
+                    )
+                ), '[]'::json)
+            ) AS geojson
+            FROM {tabla} t {where_clause};
+            """
         row = await conn.fetchrow(sql, *args)
         return json.loads(row['geojson'])
 
@@ -90,22 +127,45 @@ async def get_changes(
 
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        sql = f"""
-        SELECT json_build_object(
-            'type', 'FeatureCollection',
-            'features', COALESCE(json_agg(
-                json_build_object(
-                    'type', 'Feature',
-                    'id', id::text,
-                    'geometry', CASE WHEN deleted_at IS NULL THEN ST_AsGeoJSON(geom)::json ELSE NULL END,
-                    'properties', to_jsonb(t.*) - 'geom',
-                    'deleted', (deleted_at IS NOT NULL)
-                )
-            ), '[]'::json)
-        ) AS geojson
-        FROM {tabla} t
-        WHERE updated_at > $1;
-        """
+        if tabla == "estructuras":
+            sql = """
+            SELECT json_build_object(
+                'type', 'FeatureCollection',
+                'features', COALESCE(json_agg(
+                    json_build_object(
+                        'type', 'Feature',
+                        'id', t.id::text,
+                        'geometry', CASE WHEN t.deleted_at IS NULL THEN ST_AsGeoJSON(t.geom)::json ELSE NULL END,
+                        'properties', (to_jsonb(t.*) - 'geom') || jsonb_build_object(
+                            'nombre_categoria', c.nombre,
+                            'nombre_tipo', tp.nombre
+                        ),
+                        'deleted', (t.deleted_at IS NOT NULL)
+                    )
+                ), '[]'::json)
+            ) AS geojson
+            FROM estructuras t
+            LEFT JOIN cat_estructuras_categoria c ON c.id = t.id_categoria
+            LEFT JOIN cat_estructuras_tipo tp ON tp.id = t.id_tipo
+            WHERE t.updated_at > $1;
+            """
+        else:
+            sql = f"""
+            SELECT json_build_object(
+                'type', 'FeatureCollection',
+                'features', COALESCE(json_agg(
+                    json_build_object(
+                        'type', 'Feature',
+                        'id', id::text,
+                        'geometry', CASE WHEN deleted_at IS NULL THEN ST_AsGeoJSON(geom)::json ELSE NULL END,
+                        'properties', to_jsonb(t.*) - 'geom',
+                        'deleted', (deleted_at IS NOT NULL)
+                    )
+                ), '[]'::json)
+            ) AS geojson
+            FROM {tabla} t
+            WHERE updated_at > $1;
+            """
         row = await conn.fetchrow(sql, since_dt)
         return json.loads(row['geojson'])
 
@@ -188,39 +248,69 @@ async def create_feature(tabla: str, payload: Dict[str, Any]):
         logger.info(f"[AUDIT GEOMETRIA] Guardando feature en {tabla} - ID: {feature_id}, Modificado por: {updated_by or created_by or 'Anónimo'}")
 
         if tabla == "estructuras":
+            id_categoria = parse_int_or_none(properties.get("id_categoria"))
+            id_tipo = parse_int_or_none(properties.get("id_tipo"))
+
+            if id_categoria is None or id_tipo is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="id_categoria e id_tipo son requeridos y deben ser enteros válidos"
+                )
+
+            # ── Validación cruzada: la categoría debe pertenecer al tipo indicado ──────
+            # Query parametrizada — nunca concatenar id_categoria o id_tipo en el SQL.
+            cat_valida = await conn.fetchval(
+                "SELECT 1 FROM cat_estructuras_categoria WHERE id = $1 AND tipo = $2",
+                id_categoria, id_tipo
+            )
+            if cat_valida is None:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"La categoría seleccionada (id={id_categoria}) no corresponde "
+                        f"al tipo de estructura indicado (id_tipo={id_tipo}). "
+                        "Verifique que la categoría pertenezca al tipo correcto."
+                    )
+                )
+
             sql = """
             INSERT INTO estructuras (
-                id, geom, nombre, notas, categoria, tipo_formal, tipo_referencia,
+                id, geom, nombre, notas, id_categoria, id_tipo,
                 estado, niveles_cantidad, created_by, updated_by, device_id, sync_version
             )
             VALUES (
                 COALESCE($1::uuid, uuid_generate_v4()), ST_GeomFromGeoJSON($2),
-                $3, $4, $5, $6, $7, $8, $9,
-                $10::uuid, $11::uuid, $12, 0
+                $3, $4, $5, $6, $7, $8,
+                $9::uuid, $10::uuid, $11, 0
             )
             ON CONFLICT (id) DO UPDATE SET
                 geom = ST_GeomFromGeoJSON($2),
-                nombre = $3, notas = $4, categoria = $5,
-                tipo_formal = $6, tipo_referencia = $7, estado = $8,
-                niveles_cantidad = $9,
-                updated_by = $11::uuid, device_id = $12,
+                nombre = $3, notas = $4, id_categoria = $5,
+                id_tipo = $6, estado = $7,
+                niveles_cantidad = $8,
+                updated_by = $10::uuid, device_id = $11,
                 sync_version = estructuras.sync_version + 1,
                 updated_at = NOW(),
                 deleted_at = NULL
             RETURNING
                 id::text, ST_AsGeoJSON(geom)::json AS geometry,
-                nombre, notas, categoria, tipo_formal, tipo_referencia,
+                nombre, notas, id_categoria, id_tipo,
                 estado, niveles_cantidad, sync_version,
                 created_by::text, updated_by::text, device_id;
             """
-            row = await conn.fetchrow(
-                sql, feature_id, geom_json,
-                properties.get("nombre"), properties.get("notas"),
-                properties.get("categoria"), properties.get("tipo_formal"),
-                properties.get("tipo_referencia"), properties.get("estado"),
-                properties.get("niveles_cantidad", 1),
-                created_by, updated_by, device_id
-            )
+            try:
+                row = await conn.fetchrow(
+                    sql, feature_id, geom_json,
+                    properties.get("nombre"), properties.get("notas"),
+                    id_categoria, id_tipo, properties.get("estado"),
+                    properties.get("niveles_cantidad", 1),
+                    created_by, updated_by, device_id
+                )
+            except asyncpg.exceptions.ForeignKeyViolationError as e:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Error de llave foránea: id_categoria o id_tipo no existen en los catálogos ({e.detail})"
+                )
         elif tabla == "caminos":
             sql = """
             INSERT INTO caminos (id, geom, nombre, tipo, notas, created_by, updated_by, device_id, sync_version)
@@ -302,3 +392,58 @@ async def delete_feature(tabla: str, feature_id: str, updated_by: Optional[str] 
             "deleted_id": row['id'],
             "deleted_at": row['deleted_at'].isoformat()
         }
+
+
+@router.get("/catalogos/estructuras/tipos")
+async def get_catalogos_tipos():
+    """Retorna los tipos de estructuras disponibles (ej: 1=Formal, 2=Referencia)."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, nombre, descripcion FROM cat_estructuras_tipo ORDER BY id ASC;"
+        )
+        return [dict(r) for r in rows]
+
+
+@router.get("/catalogos/estructuras/categorias")
+async def get_catalogos_categorias(
+    tipo: Optional[int] = Query(
+        default=None,
+        description="Filtra categorías por tipo de estructura. 1=Formal, 2=Referencia. "
+                    "Si se omite, devuelve todas las categorías."
+    )
+):
+    """
+    Retorna las categorías de estructuras.
+    Con `tipo` se obtiene solo las categorías del tipo indicado (combo dependiente).
+    Sin `tipo` devuelve todas (útil para carga inicial o admin).
+
+    Ejemplo:
+      GET /api/capas/catalogos/estructuras/categorias?tipo=1  → solo categorías Formal
+      GET /api/capas/catalogos/estructuras/categorias?tipo=2  → solo categorías Referencia
+    """
+    if tipo is not None and tipo not in TIPOS_ESTRUCTURA_VALIDOS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Tipo inválido: {tipo!r}. Valores permitidos: {TIPOS_ESTRUCTURA_VALIDOS}"
+        )
+
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        if tipo is not None:
+            # Query parametrizada — nunca concatenar tipo en el SQL
+            rows = await conn.fetch(
+                "SELECT id, nombre, tipo, descripcion "
+                "FROM cat_estructuras_categoria "
+                "WHERE tipo = $1 "
+                "ORDER BY nombre ASC;",
+                tipo
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT id, nombre, tipo, descripcion "
+                "FROM cat_estructuras_categoria "
+                "ORDER BY tipo ASC, nombre ASC;"
+            )
+        return [dict(r) for r in rows]
+

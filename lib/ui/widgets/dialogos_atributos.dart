@@ -1,6 +1,9 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import '../../core/models/capa_geometrica.dart';
 import '../../ui/theme/app_theme.dart';
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TIPOS DE RETORNO (DART 3 RECORDS)
@@ -8,9 +11,8 @@ import '../../ui/theme/app_theme.dart';
 
 typedef AtributosPuntoResult = ({
   String nombre,
-  CategoriaEstructura categoria,
-  TipoEstructuraFormal? tipoFormal,
-  TipoEstructuraReferencia? tipoReferencia,
+  int idCategoria,
+  int idTipo,
   EstadoEstructura estado,
   int nivelesCantidad,
   String notas,
@@ -33,30 +35,45 @@ typedef AtributosPoligonoResult = ({
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Formulario de atributos para un nuevo punto (Estructura) o para editar uno existente.
-/// El Paso 4 extenderá esto con la gestión de Niveles/Locales/Sub-locales.
+///
+/// Flujo del combo dependiente:
+///   1. El usuario selecciona un **tipo** (Formal / Referencia).
+///   2. El widget llama al backend [GET /api/capas/catalogos/estructuras/categorias?tipo={id}]
+///      y puebla el combo de **categoría** con la respuesta.
+///   3. Si el tipo cambia, la categoría se resetea (null) y se repuebla.
+///
+/// Modo edición: al abrir con [idTipoInicial] e [idCategoriaInicial], primero carga
+/// las categorías del tipo guardado, después preselecciona la categoría actual.
 class DialogoAtributosPunto extends StatefulWidget {
   final double lat;
   final double lng;
 
+  /// Lista de tipos disponibles (Formal, Referencia…). Se pasa desde el padre
+  /// para evitar una llamada de red extra al abrir el diálogo.
+  final List<CatalogoItem> tipos;
+
   // Parámetros opcionales para modo edición / consulta
   final String? nombreInicial;
-  final CategoriaEstructura? categoriaInicial;
-  final TipoEstructuraFormal? tipoFormalInicial;
-  final TipoEstructuraReferencia? tipoReferenciaInicial;
+  final int? idCategoriaInicial;
+  final int? idTipoInicial;
   final EstadoEstructura? estadoInicial;
   final int? nivelesInicial;
   final String? notasIniciales;
   final bool soloLectura;
   final VoidCallback? onAbrirNiveles;
 
+  /// URL base del backend (ej. 'http://10.0.2.2:8000'). Se pasa desde map_screen.
+  final String baseUrl;
+
   const DialogoAtributosPunto({
     super.key,
     required this.lat,
     required this.lng,
+    required this.baseUrl,
+    this.tipos = const [],
     this.nombreInicial,
-    this.categoriaInicial,
-    this.tipoFormalInicial,
-    this.tipoReferenciaInicial,
+    this.idCategoriaInicial,
+    this.idTipoInicial,
     this.estadoInicial,
     this.nivelesInicial,
     this.notasIniciales,
@@ -74,10 +91,13 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nombreCtrl;
   late final TextEditingController _notasCtrl;
-  
-  late CategoriaEstructura _categoria;
-  late TipoEstructuraFormal? _tipoFormal;
-  late TipoEstructuraReferencia? _tipoReferencia;
+
+  int? _idTipo;
+  int? _idCategoria;
+  List<CatalogoItem> _categoriasFiltradas = [];
+  bool _cargandoCategorias = false;
+  String? _errorCategorias;
+
   late EstadoEstructura _estado;
   late int _niveles;
 
@@ -85,17 +105,75 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
   void initState() {
     super.initState();
     _nombreCtrl = TextEditingController(text: widget.nombreInicial ?? '');
-    _notasCtrl = TextEditingController(text: widget.notasIniciales ?? '');
-    _categoria = widget.categoriaInicial ?? CategoriaEstructura.formal;
-    if (_categoria == CategoriaEstructura.formal) {
-      _tipoFormal = widget.tipoFormalInicial ?? TipoEstructuraFormal.vivienda;
-      _tipoReferencia = null;
-    } else {
-      _tipoFormal = null;
-      _tipoReferencia = widget.tipoReferenciaInicial ?? TipoEstructuraReferencia.puente;
-    }
-    _estado = widget.estadoInicial ?? EstadoEstructura.presente;
+    _notasCtrl  = TextEditingController(text: widget.notasIniciales ?? '');
+    _estado  = widget.estadoInicial ?? EstadoEstructura.presente;
     _niveles = widget.nivelesInicial ?? 1;
+
+    // Modo edición: carga las categorías del tipo guardado y luego
+    // preselecciona la categoría actual. Este orden es obligatorio.
+    if (widget.idTipoInicial != null) {
+      _idTipo = widget.idTipoInicial;
+      // Diferir para que el frame inicial se renderice antes de setState
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _cargarCategorias(_idTipo!, preseleccionarId: widget.idCategoriaInicial);
+      });
+    }
+    // Modo creación: tipo por defecto = primer tipo disponible
+    else if (widget.tipos.isNotEmpty) {
+      _idTipo = widget.tipos.first.id;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _cargarCategorias(_idTipo!);
+      });
+    }
+  }
+
+  /// Llama a GET /api/capas/catalogos/estructuras/categorias?tipo={tipo}
+  /// y actualiza el estado del combo de categoría.
+  ///
+  /// [preseleccionarId]: si se indica, selecciona esa categoría tras la carga
+  /// (útil en modo edición). Si no se indica, la selección queda en null (usuario elige).
+  Future<void> _cargarCategorias(int tipo, {int? preseleccionarId}) async {
+    setState(() {
+      _cargandoCategorias = true;
+      _errorCategorias    = null;
+      _idCategoria        = null;         // siempre resetear al cambiar tipo
+      _categoriasFiltradas = [];
+    });
+
+    try {
+      final uri = Uri.parse(
+        '${widget.baseUrl}/api/capas/catalogos/estructuras/categorias?tipo=$tipo',
+      );
+      final resp = await http.get(uri).timeout(const Duration(seconds: 6));
+
+      if (!mounted) return;
+
+      if (resp.statusCode == 200) {
+        final lista = (jsonDecode(resp.body) as List)
+            .map((e) => CatalogoItem.fromJson(e as Map<String, dynamic>))
+            .toList();
+        setState(() {
+          _categoriasFiltradas = lista;
+          _cargandoCategorias  = false;
+          // En modo edición restaurar la categoría previa si sigue en la lista
+          if (preseleccionarId != null &&
+              lista.any((c) => c.id == preseleccionarId)) {
+            _idCategoria = preseleccionarId;
+          }
+        });
+      } else {
+        setState(() {
+          _cargandoCategorias = false;
+          _errorCategorias    = 'Error ${resp.statusCode} al cargar categorías';
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cargandoCategorias = false;
+        _errorCategorias    = 'Sin conexión al servidor';
+      });
+    }
   }
 
   @override
@@ -108,7 +186,7 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
   @override
   Widget build(BuildContext context) {
     final esModoEdicion = widget.esModoEdicion;
-    final soloLectura = widget.soloLectura;
+    final soloLectura   = widget.soloLectura;
 
     return Dialog(
       backgroundColor: AppTheme.surface,
@@ -121,17 +199,17 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
           mainAxisSize: MainAxisSize.min,
           children: [
             _buildHeader(
-              icon: soloLectura 
-                  ? Icons.info_outline 
+              icon: soloLectura
+                  ? Icons.info_outline
                   : (esModoEdicion ? Icons.edit_location_alt : Icons.place),
-              titulo: soloLectura 
-                  ? 'Atributos de Estructura' 
+              titulo: soloLectura
+                  ? 'Atributos de Estructura'
                   : (esModoEdicion ? 'Editar Estructura' : 'Nueva Estructura'),
               subtitulo:
                   'Lat: ${widget.lat.toStringAsFixed(6)}  '
                   'Lng: ${widget.lng.toStringAsFixed(6)}',
-              color: soloLectura 
-                  ? const Color(0xFF4FC3F7) 
+              color: soloLectura
+                  ? const Color(0xFF4FC3F7)
                   : (esModoEdicion ? const Color(0xFFFFB74D) : const Color(0xFF4FC3F7)),
             ),
             Padding(
@@ -141,7 +219,7 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Nombre
+                    // ── Nombre ───────────────────────────────────────────────
                     TextFormField(
                       controller: _nombreCtrl,
                       autofocus: !soloLectura,
@@ -152,78 +230,56 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                         prefixIcon: Icon(Icons.label_outline, size: 18),
                       ),
                       validator: (v) =>
-                          (!soloLectura && (v == null || v.trim().isEmpty)) ? 'Requerido' : null,
+                          (!soloLectura && (v == null || v.trim().isEmpty))
+                              ? 'Requerido'
+                              : null,
                     ),
 
                     const SizedBox(height: 14),
 
-                    // Categoría
-                    Text('Categoría de Estructura', style: Theme.of(context).textTheme.labelLarge),
+                    // ── Tipo (combo 1 — controla la carga del combo 2) ───────
+                    Text('Tipo de Estructura *',
+                        style: Theme.of(context).textTheme.labelLarge),
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: RadioListTile<CategoriaEstructura>(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('Formal', style: TextStyle(fontSize: 14)),
-                            value: CategoriaEstructura.formal,
-                            groupValue: _categoria,
-                            onChanged: soloLectura ? null : (v) => setState(() {
-                              _categoria = v!;
-                              _tipoFormal = widget.tipoFormalInicial ?? TipoEstructuraFormal.vivienda;
-                              _tipoReferencia = null;
-                            }),
-                          ),
-                        ),
-                        Expanded(
-                          child: RadioListTile<CategoriaEstructura>(
-                            contentPadding: EdgeInsets.zero,
-                            title: const Text('Referencia Geográfica', style: TextStyle(fontSize: 14)),
-                            value: CategoriaEstructura.referencia,
-                            groupValue: _categoria,
-                            onChanged: soloLectura ? null : (v) => setState(() {
-                              _categoria = v!;
-                              _tipoReferencia = widget.tipoReferenciaInicial ?? TipoEstructuraReferencia.puente;
-                              _tipoFormal = null;
-                            }),
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 8),
-
-                    // Tipo
-                    Text('Tipo', style: Theme.of(context).textTheme.labelLarge),
-                    const SizedBox(height: 8),
-                    if (_categoria == CategoriaEstructura.formal)
-                      DropdownButtonFormField<TipoEstructuraFormal>(
-                        value: _tipoFormal,
-                        decoration: const InputDecoration(prefixIcon: Icon(Icons.category, size: 18)),
-                        items: TipoEstructuraFormal.values.map((t) {
-                          return DropdownMenuItem(
-                            value: t,
-                            child: Text('${t.emoji} ${t.label}'),
-                          );
-                        }).toList(),
-                        onChanged: soloLectura ? null : (v) => setState(() => _tipoFormal = v),
-                      )
-                    else
-                      DropdownButtonFormField<TipoEstructuraReferencia>(
-                        value: _tipoReferencia,
-                        decoration: const InputDecoration(prefixIcon: Icon(Icons.category, size: 18)),
-                        items: TipoEstructuraReferencia.values.map((t) {
-                          return DropdownMenuItem(
-                            value: t,
-                            child: Text('${t.emoji} ${t.label}'),
-                          );
-                        }).toList(),
-                        onChanged: soloLectura ? null : (v) => setState(() => _tipoReferencia = v),
+                    DropdownButtonFormField<int>(
+                      value: widget.tipos.any((t) => t.id == _idTipo)
+                          ? _idTipo
+                          : null,
+                      decoration: const InputDecoration(
+                        prefixIcon: Icon(Icons.home_work_outlined, size: 18),
                       ),
+                      hint: const Text('Selecciona un tipo'),
+                      items: widget.tipos.map((t) {
+                        return DropdownMenuItem<int>(
+                          value: t.id,
+                          child: Text(t.nombre,
+                              style: const TextStyle(fontSize: 14)),
+                        );
+                      }).toList(),
+                      onChanged: soloLectura
+                          ? null
+                          : (v) {
+                              if (v == null || v == _idTipo) return;
+                              setState(() => _idTipo = v);
+                              // Repoblar categorías al cambiar tipo; resetear selección
+                              _cargarCategorias(v);
+                            },
+                      validator: (v) => (!soloLectura && v == null)
+                          ? 'Seleccione un tipo'
+                          : null,
+                    ),
 
                     const SizedBox(height: 14),
 
-                    // Estado y Niveles
+                    // ── Categoría (combo 2 — dependiente del tipo) ────────────
+                    Text('Categoría de Estructura *',
+                        style: Theme.of(context).textTheme.labelLarge),
+                    const SizedBox(height: 8),
+                    _buildComboCategorias(soloLectura),
+
+                    const SizedBox(height: 14),
+
+                    // ── Estado y Niveles ─────────────────────────────────────
                     Row(
                       children: [
                         Expanded(
@@ -231,14 +287,22 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Estado', style: Theme.of(context).textTheme.labelLarge),
+                              Text('Estado',
+                                  style:
+                                      Theme.of(context).textTheme.labelLarge),
                               const SizedBox(height: 8),
                               DropdownButtonFormField<EstadoEstructura>(
                                 value: _estado,
                                 items: EstadoEstructura.values.map((e) {
-                                  return DropdownMenuItem(value: e, child: Text(e.label, style: const TextStyle(fontSize: 13)));
+                                  return DropdownMenuItem(
+                                      value: e,
+                                      child: Text(e.label,
+                                          style: const TextStyle(
+                                              fontSize: 13)));
                                 }).toList(),
-                                onChanged: soloLectura ? null : (v) => setState(() => _estado = v!),
+                                onChanged: soloLectura
+                                    ? null
+                                    : (v) => setState(() => _estado = v!),
                               ),
                             ],
                           ),
@@ -249,14 +313,23 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Niveles (1-10)', style: Theme.of(context).textTheme.labelLarge),
+                              Text('Niveles (1-10)',
+                                  style:
+                                      Theme.of(context).textTheme.labelLarge),
                               const SizedBox(height: 8),
                               DropdownButtonFormField<int>(
                                 value: _niveles,
-                                items: List.generate(10, (i) => i + 1).map((n) {
-                                  return DropdownMenuItem(value: n, child: Text('$n', style: const TextStyle(fontSize: 13)));
+                                items:
+                                    List.generate(10, (i) => i + 1).map((n) {
+                                  return DropdownMenuItem(
+                                      value: n,
+                                      child: Text('$n',
+                                          style: const TextStyle(
+                                              fontSize: 13)));
                                 }).toList(),
-                                onChanged: soloLectura ? null : (v) => setState(() => _niveles = v!),
+                                onChanged: soloLectura
+                                    ? null
+                                    : (v) => setState(() => _niveles = v!),
                               ),
                             ],
                           ),
@@ -266,7 +339,7 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
 
                     const SizedBox(height: 14),
 
-                    // Notas
+                    // ── Notas ─────────────────────────────────────────────────
                     TextFormField(
                       controller: _notasCtrl,
                       maxLines: 2,
@@ -276,24 +349,6 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                         prefixIcon: Icon(Icons.notes, size: 18),
                       ),
                     ),
-
-                    if (!esModoEdicion && !soloLectura) ...[
-                      const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppTheme.primary.withOpacity(0.07),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Text(
-                          '💡 En el Paso 4 podrás agregar Niveles, Locales y Sub-locales a esta estructura.',
-                          style: TextStyle(
-                              color: AppTheme.primary,
-                              fontSize: 11,
-                              height: 1.4),
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -304,9 +359,8 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
                 if (!_formKey.currentState!.validate()) return;
                 Navigator.pop(context, (
                   nombre: _nombreCtrl.text.trim(),
-                  categoria: _categoria,
-                  tipoFormal: _categoria == CategoriaEstructura.formal ? _tipoFormal : null,
-                  tipoReferencia: _categoria == CategoriaEstructura.referencia ? _tipoReferencia : null,
+                  idCategoria: _idCategoria ?? 1,
+                  idTipo: _idTipo ?? 1,
                   estado: _estado,
                   nivelesCantidad: _niveles,
                   notas: _notasCtrl.text.trim(),
@@ -321,7 +375,93 @@ class _DialogoAtributosPuntoState extends State<DialogoAtributosPunto> {
       ),
     );
   }
+
+  /// Construye el dropdown de categorías con los estados:
+  ///   • Sin tipo seleccionado → campo deshabilitado con mensaje guía.
+  ///   • Cargando desde API    → spinner + texto.
+  ///   • Error de red          → mensaje naranja + botón "Reintentar".
+  ///   • Datos disponibles     → DropdownButtonFormField normal.
+  Widget _buildComboCategorias(bool soloLectura) {
+    // Sin tipo seleccionado → deshabilitar
+    if (_idTipo == null) {
+      return InputDecorator(
+        decoration: const InputDecoration(
+          prefixIcon: Icon(Icons.category_outlined, size: 18),
+        ),
+        child: Text(
+          'Selecciona un tipo primero',
+          style: TextStyle(color: Theme.of(context).hintColor, fontSize: 14),
+        ),
+      );
+    }
+
+    // Cargando desde API
+    if (_cargandoCategorias) {
+      return const SizedBox(
+        height: 48,
+        child: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(width: 10),
+              Text('Cargando categorías…', style: TextStyle(fontSize: 13)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // Error de red o HTTP
+    if (_errorCategorias != null) {
+      return Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded,
+              color: Colors.orange, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              _errorCategorias!,
+              style: const TextStyle(color: Colors.orange, fontSize: 13),
+            ),
+          ),
+          TextButton(
+            onPressed: () =>
+                _cargarCategorias(_idTipo!, preseleccionarId: _idCategoria),
+            child: const Text('Reintentar'),
+          ),
+        ],
+      );
+    }
+
+    // Datos disponibles
+    return DropdownButtonFormField<int>(
+      value: _categoriasFiltradas.any((c) => c.id == _idCategoria)
+          ? _idCategoria
+          : null,
+      decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.category_outlined, size: 18),
+      ),
+      hint: const Text('Selecciona una categoría'),
+      isExpanded: true,
+      items: _categoriasFiltradas.map((c) {
+        return DropdownMenuItem<int>(
+          value: c.id,
+          child: Text(c.nombre, style: const TextStyle(fontSize: 13)),
+        );
+      }).toList(),
+      onChanged: soloLectura ? null : (v) => setState(() => _idCategoria = v),
+      validator: (v) => (!soloLectura && v == null)
+          ? 'Seleccione una categoría'
+          : null,
+    );
+  }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DIÁLOGO DE ATRIBUTOS — LÍNEA / CAMINO

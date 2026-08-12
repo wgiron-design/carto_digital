@@ -1,7 +1,9 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -44,6 +46,9 @@ class _MapScreenState extends State<MapScreen> {
   bool _cargando = false;
   /// Controla si el botón ℹ️ está activo (mostrar info al tocar elementos)
   bool _modoInfoActivo = false;
+  /// Catálogo de tipos (Formal/Referencia) cargado al iniciar.
+  /// Se pasa al DialogoAtributosPunto para evitar llamadas extra al abrir el diálogo.
+  List<CatalogoItem> _tiposCatalogo = const [];
 
   @override
   void initState() {
@@ -55,7 +60,28 @@ class _MapScreenState extends State<MapScreen> {
       
       // Cargar geometrías desde PostGIS con fallback automático a SQLite local
       context.read<DigitalizacionController>().cargarDesdePostGIS();
+
+      // Precargar catálogo de tipos para el combo dependiente del formulario
+      _cargarTiposCatalogo();
     });
+  }
+
+  /// Carga el catálogo de tipos de estructura una vez al iniciar la pantalla.
+  /// El resultado se almacena en [_tiposCatalogo] y se pasa a [DialogoAtributosPunto].
+  Future<void> _cargarTiposCatalogo() async {
+    try {
+      final svc = PostGISService();
+      final uri = Uri.parse('${svc.baseUrl}/api/capas/catalogos/estructuras/tipos');
+      final resp = await http.get(uri).timeout(const Duration(seconds: 6));
+      if (resp.statusCode == 200 && mounted) {
+        final lista = (jsonDecode(resp.body) as List)
+            .map((e) => CatalogoItem.fromJson(e as Map<String, dynamic>))
+            .toList();
+        setState(() => _tiposCatalogo = lista);
+      }
+    } catch (e) {
+      debugPrint('[MapScreen] No se pudo cargar catálogo de tipos: $e');
+    }
   }
 
   @override
@@ -1067,9 +1093,8 @@ class _MapScreenState extends State<MapScreen> {
     final puntoBase = PuntoEstructura.nuevo(
       coordenadas: punto,
       nombre: '',  // nombre vacío inicial
-      categoria: CategoriaEstructura.formal,
-      tipoFormal: TipoEstructuraFormal.vivienda,
-      tipoReferencia: null,
+      idCategoria: 1,
+      idTipo: 1,
       estado: EstadoEstructura.presente,
       nivelesCantidad: 1,
       notas: '',
@@ -1090,6 +1115,8 @@ class _MapScreenState extends State<MapScreen> {
       builder: (_) => DialogoAtributosPunto(
         lat: punto.latitude,
         lng: punto.longitude,
+        baseUrl: PostGISService().baseUrl,
+        tipos: _tiposCatalogo,
       ),
     );
 
@@ -1099,9 +1126,8 @@ class _MapScreenState extends State<MapScreen> {
         id: puntoBase.id,
         coordenadas: puntoBase.coordenadas,
         nombre: result.nombre,
-        categoria: result.categoria,
-        tipoFormal: result.tipoFormal,
-        tipoReferencia: result.tipoReferencia,
+        idCategoria: result.idCategoria,
+        idTipo: result.idTipo,
         estado: result.estado,
         nivelesCantidad: result.nivelesCantidad,
         notas: result.notas,
@@ -1261,7 +1287,7 @@ class _MapScreenState extends State<MapScreen> {
                         ),
                       ),
                       Text(
-                        '${punto.categoria == CategoriaEstructura.formal ? "Formal" : "Ref. Geográfica"} - ${punto.labelTipoActivo}',
+                        '${punto.idTipo == 1 ? "Formal" : punto.idTipo == 2 ? "Ref. Geográfica" : "Tipo ${punto.idTipo}"} · Cat. ${punto.idCategoria}',
                         style: const TextStyle(
                           color: Color(0xFF4FC3F7),
                           fontSize: 13,
@@ -1341,128 +1367,100 @@ class _MapScreenState extends State<MapScreen> {
 
             const SizedBox(height: 16),
 
-            // Acciones — solo visibles en modo Edición (excepto Niveles)
-            if (digCtrl.modoEdicion) ...[
-              Builder(builder: (context) {
-                final auth = Provider.of<AuthController>(context, listen: false);
-                final esPropietario = digCtrl.esPropietario(punto.createdBy, auth.currentUserId);
-                void mostrarMensajeNoPropietario() {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Ud. no creo este elemento, no tiene permisos de edición'),
-                      backgroundColor: AppTheme.warning,
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                }
+            // ── BOTONES DE ACCIÓN PARA EL PUNTO SELECCIONADO ────────────────
+            Builder(builder: (context) {
+              final auth = Provider.of<AuthProvider>(context, listen: false);
+              final esPropietario = (punto.createdBy == null) ||
+                  (auth.currentUserId != null && str(punto.createdBy) == str(auth.currentUserId));
 
-                return Column(
-                  children: [
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.open_with, size: 16),
-                        label: const Text('Mover', style: TextStyle(fontSize: 12)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: esPropietario ? const Color(0xFF4FC3F7) : Colors.grey.shade700,
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: () {
-                          if (!esPropietario) {
-                            mostrarMensajeNoPropietario();
-                            return;
-                          }
-                          Navigator.pop(context);
-                          digCtrl.iniciarDragPunto(punto.id);
-                        },
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            icon: const Icon(Icons.delete_outline, size: 16),
-                            label: const Text('Eliminar', style: TextStyle(fontSize: 12)),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: esPropietario ? AppTheme.error : Colors.grey,
-                              side: BorderSide(color: esPropietario ? AppTheme.error : Colors.grey),
-                            ),
-                            onPressed: () {
-                              if (!esPropietario) {
-                                mostrarMensajeNoPropietario();
-                                return;
-                              }
-                              digCtrl.eliminarPunto(punto.id, updatedBy: auth.currentUserId);
-                              Navigator.pop(context);
-                            },
+              return Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.account_tree_outlined, size: 16),
+                          label: const Text('Niveles', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF4FC3F7),
+                            foregroundColor: Colors.white,
                           ),
+                          onPressed: () async {
+                            Navigator.pop(context);
+                            await Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => NivelListaScreen(puntoEstructura: punto),
+                              ),
+                            );
+                          },
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            icon: const Icon(Icons.edit_outlined, size: 16),
-                            label: const Text('Editar', style: TextStyle(fontSize: 12)),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: esPropietario ? const Color(0xFFFFB74D) : Colors.grey,
-                              side: BorderSide(color: esPropietario ? const Color(0xFFFFB74D) : Colors.grey),
-                            ),
-                            onPressed: () async {
-                              if (!esPropietario) {
-                                mostrarMensajeNoPropietario();
-                                return;
-                              }
-                              Navigator.pop(context);
-                              final result = await showDialog<AtributosPuntoResult>(
-                                context: context,
-                                builder: (_) => DialogoAtributosPunto(
-                                  lat: punto.coordenadas.latitude,
-                                  lng: punto.coordenadas.longitude,
-                                  nombreInicial: punto.nombre,
-                                  categoriaInicial: punto.categoria,
-                                  tipoFormalInicial: punto.tipoFormal,
-                                  tipoReferenciaInicial: punto.tipoReferencia,
-                                  estadoInicial: punto.estado,
-                                  nivelesInicial: punto.nivelesCantidad,
-                                  notasIniciales: punto.notas,
-                                  soloLectura: !esPropietario,
-                                  onAbrirNiveles: () async {
-                                    Navigator.pop(context);
-                                    await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => NivelListaScreen(puntoEstructura: punto),
-                                      ),
-                                    );
-                                  },
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.edit_outlined, size: 16),
+                          label: const Text('Editar', style: TextStyle(fontSize: 12)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: const Color(0xFFFFB74D),
+                            side: const BorderSide(color: Color(0xFFFFB74D)),
+                          ),
+                          onPressed: () async {
+                            if (!esPropietario) {
+                              mostrarMensajeNoPropietario();
+                              return;
+                            }
+                            Navigator.pop(context);
+                            final result = await showDialog<AtributosPuntoResult>(
+                              context: context,
+                              builder: (_) => DialogoAtributosPunto(
+                                lat: punto.coordenadas.latitude,
+                                lng: punto.coordenadas.longitude,
+                                baseUrl: PostGISService().baseUrl,
+                                tipos: _tiposCatalogo,
+                                nombreInicial: punto.nombre,
+                                idCategoriaInicial: punto.idCategoria,
+                                idTipoInicial: punto.idTipo,
+                                estadoInicial: punto.estado,
+                                nivelesInicial: punto.nivelesCantidad,
+                                notasIniciales: punto.notas,
+                                soloLectura: !esPropietario,
+                                onAbrirNiveles: () async {
+                                  Navigator.pop(context);
+                                  await Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => NivelListaScreen(puntoEstructura: punto),
+                                    ),
+                                  );
+                                },
+                              ),
+                            );
+                            if (result != null && mounted && esPropietario) {
+                              final puntoEditado = PuntoEstructura(
+                                id: punto.id,
+                                coordenadas: punto.coordenadas,
+                                nombre: result.nombre,
+                                idCategoria: result.idCategoria,
+                                idTipo: result.idTipo,
+                                estado: result.estado,
+                                nivelesCantidad: result.nivelesCantidad,
+                                notas: result.notas,
+                                niveles: punto.niveles,
+                                updatedAt: DateTime.now(),
+                                syncDirty: true,
+                              );
+                              digCtrl.actualizarPunto(puntoEditado);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('✅ Estructura "${result.nombre}" actualizada'),
+                                  backgroundColor: AppTheme.success,
                                 ),
                               );
-                              if (result != null && mounted && esPropietario) {
-                                final puntoEditado = PuntoEstructura(
-                                  id: punto.id,
-                                  coordenadas: punto.coordenadas,
-                                  nombre: result.nombre,
-                                  categoria: result.categoria,
-                                  tipoFormal: result.tipoFormal,
-                                  tipoReferencia: result.tipoReferencia,
-                                  estado: result.estado,
-                                  nivelesCantidad: result.nivelesCantidad,
-                                  notas: result.notas,
-                                  niveles: punto.niveles,
-                                  updatedAt: DateTime.now(),
-                                  syncDirty: true,
-                                );
-                                digCtrl.actualizarPunto(puntoEditado);
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('✅ Estructura "${result.nombre}" actualizada'),
-                                    backgroundColor: AppTheme.success,
-                                  ),
-                                );
-                              }
-                            },
-                          ),
+                            }
+                          },
                         ),
+                      ),
                       ],
                     ),
                   ],
@@ -1485,10 +1483,11 @@ class _MapScreenState extends State<MapScreen> {
                       builder: (_) => DialogoAtributosPunto(
                         lat: punto.coordenadas.latitude,
                         lng: punto.coordenadas.longitude,
+                        baseUrl: PostGISService().baseUrl,
+                        tipos: _tiposCatalogo,
                         nombreInicial: punto.nombre,
-                        categoriaInicial: punto.categoria,
-                        tipoFormalInicial: punto.tipoFormal,
-                        tipoReferenciaInicial: punto.tipoReferencia,
+                        idCategoriaInicial: punto.idCategoria,
+                        idTipoInicial: punto.idTipo,
                         estadoInicial: punto.estado,
                         nivelesInicial: punto.nivelesCantidad,
                         notasIniciales: punto.notas,
@@ -1498,7 +1497,7 @@ class _MapScreenState extends State<MapScreen> {
                           await Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => JerarquiaScreen(puntoInicial: punto),
+                              builder: (_) => NivelListaScreen(puntoEstructura: punto),
                             ),
                           );
                         },
