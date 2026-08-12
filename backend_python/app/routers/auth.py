@@ -26,7 +26,7 @@ from app.services.email_service import send_reset_password_email
 router = APIRouter(prefix="/api/v1/auth", tags=["Autenticación"])
 
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_21_CREATED if hasattr(status, 'HTTP_21_CREATED') else 201)
+@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(payload: UserRegister, pool: asyncpg.Pool = Depends(get_db_pool)):
     """
     Registro de nuevos usuarios.

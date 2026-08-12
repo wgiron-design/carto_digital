@@ -22,6 +22,7 @@ class Nivel {
   final String idEstructura;
   final int numeroNivel;
   final int numeroLocales;
+  final String? descripcion;
   final DateTime updatedAt;
   final bool syncDirty;
   final List<Local> locales;
@@ -31,6 +32,7 @@ class Nivel {
     required this.idEstructura,
     required this.numeroNivel,
     this.numeroLocales = 1,
+    this.descripcion,
     DateTime? updatedAt,
     this.syncDirty = true,
     List<Local>? locales,
@@ -42,12 +44,14 @@ class Nivel {
     required String idEstructura,
     required int numeroNivel,
     int numeroLocales = 1,
+    String? descripcion,
   }) {
     return Nivel(
       id: _uuid.v4(),
       idEstructura: idEstructura,
       numeroNivel: numeroNivel,
       numeroLocales: numeroLocales,
+      descripcion: descripcion,
       syncDirty: true,
     );
   }
@@ -57,6 +61,7 @@ class Nivel {
         'id_estructura': idEstructura,
         'numero_nivel': numeroNivel,
         'numero_locales': numeroLocales,
+        'descripcion': descripcion,
         'updated_at': updatedAt.toIso8601String(),
         'sync_dirty': syncDirty ? 1 : 0,
         'locales': locales.map((l) => l.toJson()).toList(),
@@ -64,9 +69,10 @@ class Nivel {
 
   factory Nivel.fromJson(Map<String, dynamic> json) => Nivel(
         id: json['id'] as String,
-        idEstructura: json['id_estructura'] as String,
-        numeroNivel: (json['numero_nivel'] as num).toInt(),
+        idEstructura: (json['id_estructura'] ?? json['estructura_id'] ?? '') as String,
+        numeroNivel: ((json['numero_nivel'] ?? json['numero']) as num).toInt(),
         numeroLocales: json['numero_locales'] != null ? (json['numero_locales'] as num).toInt() : 1,
+        descripcion: json['descripcion'] as String?,
         updatedAt: json['updated_at'] != null ? DateTime.parse(json['updated_at'] as String) : DateTime.now(),
         syncDirty: json['sync_dirty'] == 1 || json['sync_dirty'] == true,
         locales: (json['locales'] as List? ?? [])
@@ -80,16 +86,18 @@ class Nivel {
       'estructura_id': idEstructura,
       'numero': numeroNivel,
       'numero_locales': numeroLocales,
+      'descripcion': descripcion,
       'updated_at': updatedAt.toIso8601String(),
       'sync_dirty': syncDirty ? 1 : 0,
     };
   }
 
-  Nivel copyWith({int? numeroNivel, int? numeroLocales, List<Local>? locales}) => Nivel(
+  Nivel copyWith({int? numeroNivel, int? numeroLocales, String? descripcion, List<Local>? locales}) => Nivel(
         id: id,
         idEstructura: idEstructura,
         numeroNivel: numeroNivel ?? this.numeroNivel,
         numeroLocales: numeroLocales ?? this.numeroLocales,
+        descripcion: descripcion ?? this.descripcion,
         updatedAt: DateTime.now(),
         syncDirty: true,
         locales: locales ?? this.locales,

@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Any, Dict, List, Optional
 from app.database import get_db_pool
 from app.schemas.feature import SyncBatchPayload, SyncResult, SyncedItem
+from app.routers.features import parse_uuid_or_none
 
 router = APIRouter(prefix="/api/sync", tags=["Sincronizacion Offline"])
 
@@ -17,7 +18,7 @@ async def batch_sync(payload: SyncBatchPayload):
     """
     pool = await get_db_pool()
 
-    user_id   = payload.user_id or None
+    user_id   = parse_uuid_or_none(payload.user_id)
     device_id = payload.device_id or None
 
     result: Dict[str, List[SyncedItem]] = {
@@ -30,7 +31,7 @@ async def batch_sync(payload: SyncBatchPayload):
         async with conn.transaction():
             # ── Sync Puntos (estructuras) ─────────────────────────────────────
             for p in payload.puntos:
-                fid  = p.id
+                fid  = parse_uuid_or_none(p.id)
                 geom = p.geometry
                 props = p.properties
                 if not geom:
@@ -80,7 +81,7 @@ async def batch_sync(payload: SyncBatchPayload):
 
             # ── Sync Líneas (caminos) ─────────────────────────────────────────
             for l in payload.lineas:
-                fid  = l.id
+                fid  = parse_uuid_or_none(l.id)
                 geom = l.geometry
                 props = l.properties
                 if not geom:
@@ -123,7 +124,7 @@ async def batch_sync(payload: SyncBatchPayload):
 
             # ── Sync Polígonos (upms) ─────────────────────────────────────────
             for pol in payload.poligonos:
-                fid  = pol.id
+                fid  = parse_uuid_or_none(pol.id)
                 geom = pol.geometry
                 props = pol.properties
                 if not geom:

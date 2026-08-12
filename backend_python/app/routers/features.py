@@ -1,12 +1,30 @@
 import json
+import uuid
+import logging
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, Dict, Any
 from datetime import datetime
 from app.database import get_db_pool
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/capas", tags=["Geometrias GeoJSON"])
 
 TABLAS_PERMITIDAS = {"estructuras", "caminos", "upms"}
+
+
+def parse_uuid_or_none(val: Any) -> Optional[str]:
+    """Valida y convierte cualquier valor a un string UUID válido o retorna None."""
+    if not val:
+        return None
+    val_str = str(val).strip()
+    if val_str in ("", "null", "undefined", "None"):
+        return None
+    try:
+        return str(uuid.UUID(val_str))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
 
 
 @router.get("/{tabla}/features")
@@ -104,23 +122,23 @@ async def get_count(tabla: str):
         return {"count": row['count']}
 
 
-import logging
-
-logger = logging.getLogger(__name__)
-
-
-async def propietario_elemento(conn, tabla: str, feature_id: str, current_user_id: Optional[str]) -> bool:
+async def propietario_elemento(conn, tabla: str, feature_id: Optional[str], current_user_id: Optional[str]) -> bool:
     """
     Compara el usuario en sesión contra el campo created_by del elemento seleccionado.
     Si coincide -> True, si no -> False.
     """
+    clean_fid = parse_uuid_or_none(feature_id)
+    clean_uid = parse_uuid_or_none(current_user_id)
+    if not clean_fid:
+        return True
+
     try:
-        row = await conn.fetchrow(f"SELECT created_by::text FROM {tabla} WHERE id = $1::uuid", feature_id)
+        row = await conn.fetchrow(f"SELECT created_by::text FROM {tabla} WHERE id = $1::uuid", clean_fid)
         if not row or not row['created_by']:
             return True
-        if not current_user_id:
+        if not clean_uid:
             return False
-        return str(row['created_by']) == str(current_user_id)
+        return str(row['created_by']) == str(clean_uid)
     except Exception as e:
         logger.warning(f"Error comprobando propietario_elemento: {e}")
         return True
@@ -137,15 +155,16 @@ async def create_feature(tabla: str, payload: Dict[str, Any]):
 
     geometry = payload.get("geometry")
     properties = payload.get("properties", {})
-    feature_id = payload.get("id")
+    
+    feature_id = parse_uuid_or_none(payload.get("id"))
+    created_by = parse_uuid_or_none(properties.get("created_by"))
+    updated_by = parse_uuid_or_none(properties.get("updated_by"))
+    device_id  = properties.get("device_id") or None
 
     if not geometry:
         raise HTTPException(status_code=400, detail="Geometría requerida")
 
     geom_json = json.dumps(geometry)
-    created_by = properties.get("created_by") or None
-    updated_by = properties.get("updated_by") or None
-    device_id  = properties.get("device_id") or None
 
     pool = await get_db_pool()
 
@@ -254,10 +273,15 @@ async def delete_feature(tabla: str, feature_id: str, updated_by: Optional[str] 
     if tabla not in TABLAS_PERMITIDAS:
         raise HTTPException(status_code=400, detail="Tabla no autorizada")
 
-    updated_by = updated_by or None
+    clean_fid = parse_uuid_or_none(feature_id)
+    if not clean_fid:
+        raise HTTPException(status_code=400, detail="ID de elemento inválido (debe ser un UUID)")
+
+    clean_updated_by = parse_uuid_or_none(updated_by)
+
     pool = await get_db_pool()
     async with pool.acquire() as conn:
-        es_dueno = await propietario_elemento(conn, tabla, feature_id, updated_by)
+        es_dueno = await propietario_elemento(conn, tabla, clean_fid, clean_updated_by)
         if not es_dueno:
             raise HTTPException(status_code=403, detail="Ud. no creo este elemento, no tiene permisos de edición")
 
@@ -270,7 +294,7 @@ async def delete_feature(tabla: str, feature_id: str, updated_by: Optional[str] 
             WHERE id = $1::uuid AND deleted_at IS NULL
             RETURNING id::text, deleted_at
         """
-        row = await conn.fetchrow(sql, feature_id, updated_by)
+        row = await conn.fetchrow(sql, clean_fid, clean_updated_by)
         if not row:
             raise HTTPException(status_code=404, detail="Elemento no encontrado o ya eliminado")
         return {

@@ -22,6 +22,7 @@ import '../../ui/widgets/cursor_crosshair.dart';
 import '../../ui/widgets/panel_digitacion.dart';
 import '../../ui/widgets/snap_indicator.dart';
 import 'jerarquia_screen.dart';
+import 'nivel_lista_screen.dart';
 
 /// Pantalla principal del visor de mapas (Pasos 2 + 3).
 class MapScreen extends StatefulWidget {
@@ -1127,11 +1128,11 @@ class _MapScreenState extends State<MapScreen> {
         ),
       );
 
-      // Usar pushReplacement para evitar acumulación de pantallas si se repite
+      // Navegar a NivelListaScreen (Pantalla A del módulo Niveles)
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => JerarquiaScreen(puntoInicial: puntoActualizado),
+          builder: (_) => NivelListaScreen(puntoEstructura: puntoActualizado),
         ),
       );
     } else {
@@ -1430,7 +1431,7 @@ class _MapScreenState extends State<MapScreen> {
                                     await Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (_) => JerarquiaScreen(puntoInicial: punto),
+                                        builder: (_) => NivelListaScreen(puntoEstructura: punto),
                                       ),
                                     );
                                   },

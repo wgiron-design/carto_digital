@@ -20,7 +20,8 @@ async def init_db():
             ssl="require",
             min_size=1,
             max_size=10,
-            max_inactive_connection_lifetime=300,
+            max_inactive_connection_lifetime=30,
+            statement_cache_size=0,
             command_timeout=30
         )
         print("[DB] Pool de conexiones PostgreSQL/Neon iniciado correctamente.")
