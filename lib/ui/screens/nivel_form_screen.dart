@@ -237,6 +237,21 @@ class _NivelFormScreenState extends State<NivelFormScreen> {
                       ),
                     ),
 
+                    // Input de Descripción
+                    TextFormField(
+                      controller: _descripcionCtrl,
+                      maxLength: 50,
+                      maxLengthEnforcement: MaxLengthEnforcement.enforced,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        labelText: 'Descripción / Nota corta (Opcional)',
+                        hintText: 'Ej. Planta Baja, Deptos 101-104...',
+                        counterText: '$charCount/50',
+                        counterStyle: TextStyle(color: charCounterColor, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
                     // Stepper de Cantidad de Locales (HABILITADO)
                     const Text(
                       'Cantidad de Locales (Esperados)',
@@ -347,20 +362,6 @@ class _NivelFormScreenState extends State<NivelFormScreen> {
                         ),
                       ),
                     ],
-
-                    // Input de Descripción
-                    TextFormField(
-                      controller: _descripcionCtrl,
-                      maxLength: 50,
-                      maxLengthEnforcement: MaxLengthEnforcement.enforced,
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        labelText: 'Descripción / Nota corta (Opcional)',
-                        hintText: 'Ej. Planta Baja, Deptos 101-104...',
-                        counterText: '$charCount/50',
-                        counterStyle: TextStyle(color: charCounterColor, fontWeight: FontWeight.bold),
-                      ),
-                    ),
                   ],
                 ),
               ),
