@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from typing import Any, Dict, List, Optional
 from app.database import get_db_pool
 from app.schemas.feature import SyncBatchPayload, SyncResult, SyncedItem
-from app.routers.features import parse_uuid_or_none
+from app.routers.features import parse_uuid_or_none, parse_int_or_none
 
 router = APIRouter(prefix="/api/sync", tags=["Sincronizacion Offline"])
 
@@ -37,29 +37,31 @@ async def batch_sync(payload: SyncBatchPayload):
                 if not geom:
                     continue
                 geom_json = json.dumps(geom)
+                id_cat = parse_int_or_none(props.get("id_categoria"))
+                id_tip = parse_int_or_none(props.get("id_tipo"))
+
                 row = await conn.fetchrow("""
                     INSERT INTO estructuras (
-                        id, geom, nombre, notas, categoria,
-                        tipo_formal, tipo_referencia, estado, niveles_cantidad,
+                        id, geom, nombre, notas, id_categoria, id_tipo,
+                        estado, niveles_cantidad,
                         created_by, updated_by, device_id, sync_version,
                         sync_dirty, updated_at
                     )
                     VALUES (
                         COALESCE($1::uuid, uuid_generate_v4()),
-                        ST_GeomFromGeoJSON($2), $3, $4, $5, $6, $7, $8, $9,
-                        $10::uuid, $10::uuid, $11, 0, false, NOW()
+                        ST_GeomFromGeoJSON($2), $3, $4, $5, $6, $7, $8,
+                        $9::uuid, $9::uuid, $10, 0, false, NOW()
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         geom = EXCLUDED.geom,
                         nombre = EXCLUDED.nombre,
                         notas = EXCLUDED.notas,
-                        categoria = EXCLUDED.categoria,
-                        tipo_formal = EXCLUDED.tipo_formal,
-                        tipo_referencia = EXCLUDED.tipo_referencia,
+                        id_categoria = EXCLUDED.id_categoria,
+                        id_tipo = EXCLUDED.id_tipo,
                         estado = EXCLUDED.estado,
                         niveles_cantidad = EXCLUDED.niveles_cantidad,
-                        updated_by = $10::uuid,
-                        device_id = $11,
+                        updated_by = $9::uuid,
+                        device_id = $10,
                         sync_version = estructuras.sync_version + 1,
                         sync_dirty = false,
                         updated_at = NOW(),
@@ -67,8 +69,7 @@ async def batch_sync(payload: SyncBatchPayload):
                     RETURNING id::text, sync_version, updated_at
                 """,
                 fid, geom_json,
-                props.get("nombre"), props.get("notas"), props.get("categoria"),
-                props.get("tipo_formal"), props.get("tipo_referencia"),
+                props.get("nombre"), props.get("notas"), id_cat, id_tip,
                 props.get("estado"), props.get("niveles_cantidad", 1),
                 user_id, device_id)
 
@@ -165,4 +166,90 @@ async def batch_sync(payload: SyncBatchPayload):
                         updated_at=row['updated_at'],
                     ))
 
+        # 4. Sincronizar Niveles
+        result["niveles"] = []
+        for item in payload.niveles:
+            clean_id = parse_uuid_or_none(item.id)
+            clean_est_id = parse_uuid_or_none(item.estructura_id)
+            if clean_est_id:
+                row = await conn.fetchrow("""
+                    INSERT INTO niveles (id, estructura_id, numero, numero_locales, updated_at)
+                    VALUES (COALESCE($1::uuid, uuid_generate_v4()), $2::uuid, $3, $4, NOW())
+                    ON CONFLICT (id) DO UPDATE SET
+                        estructura_id = EXCLUDED.estructura_id,
+                        numero = EXCLUDED.numero,
+                        numero_locales = EXCLUDED.numero_locales,
+                        updated_at = NOW()
+                    RETURNING id::text, 1 as sync_version, updated_at;
+                """, clean_id, clean_est_id, item.numero, item.numero_locales)
+                if row:
+                    result["niveles"].append(SyncedItem(id=row['id'], sync_version=row['sync_version'], updated_at=row['updated_at']))
+
+        # 5. Sincronizar Locales
+        result["locales"] = []
+        for item in payload.locales:
+            clean_id = parse_uuid_or_none(item.id)
+            clean_niv_id = parse_uuid_or_none(item.nivel_id)
+            if clean_niv_id:
+                row = await conn.fetchrow("""
+                    INSERT INTO locales (id, nivel_id, nombre_local, id_tipo, id_condicion_local, numero_hogares, descripcion, updated_at)
+                    VALUES (COALESCE($1::uuid, uuid_generate_v4()), $2::uuid, $3, $4, $5, $6, $7, NOW())
+                    ON CONFLICT (id) DO UPDATE SET
+                        nivel_id = EXCLUDED.nivel_id,
+                        nombre_local = EXCLUDED.nombre_local,
+                        id_tipo = EXCLUDED.id_tipo,
+                        id_condicion_local = EXCLUDED.id_condicion_local,
+                        numero_hogares = EXCLUDED.numero_hogares,
+                        descripcion = EXCLUDED.descripcion,
+                        updated_at = NOW()
+                    RETURNING id::text, 1 as sync_version, updated_at;
+                """, clean_id, clean_niv_id, item.nombre_local, item.id_tipo, item.id_condicion_local, item.numero_hogares, item.descripcion)
+                if row:
+                    result["locales"].append(SyncedItem(id=row['id'], sync_version=row['sync_version'], updated_at=row['updated_at']))
+
+        # 6. Sincronizar Hogares
+        result["hogares"] = []
+        for item in payload.hogares:
+            clean_id = parse_uuid_or_none(item.id)
+            clean_loc_id = parse_uuid_or_none(item.local_id)
+            if clean_loc_id:
+                row = await conn.fetchrow("""
+                    INSERT INTO hogares (
+                        id, local_id, jefe_familia, id_sexo, id_idioma, direccion, total_habitantes,
+                        personas_0_5, personas_6_11, personas_12_17, personas_18_23,
+                        personas_24_34, personas_35_44, personas_45_59, personas_60_69,
+                        personas_70_79, personas_80_mas, personas_no_edad, updated_at
+                    )
+                    VALUES (
+                        COALESCE($1::uuid, uuid_generate_v4()), $2::uuid, $3, $4, $5, $6, $7,
+                        $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, NOW()
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                        local_id = EXCLUDED.local_id,
+                        jefe_familia = EXCLUDED.jefe_familia,
+                        id_sexo = EXCLUDED.id_sexo,
+                        id_idioma = EXCLUDED.id_idioma,
+                        direccion = EXCLUDED.direccion,
+                        total_habitantes = EXCLUDED.total_habitantes,
+                        personas_0_5 = EXCLUDED.personas_0_5,
+                        personas_6_11 = EXCLUDED.personas_6_11,
+                        personas_12_17 = EXCLUDED.personas_12_17,
+                        personas_18_23 = EXCLUDED.personas_18_23,
+                        personas_24_34 = EXCLUDED.personas_24_34,
+                        personas_35_44 = EXCLUDED.personas_35_44,
+                        personas_45_59 = EXCLUDED.personas_45_59,
+                        personas_60_69 = EXCLUDED.personas_60_69,
+                        personas_70_79 = EXCLUDED.personas_70_79,
+                        personas_80_mas = EXCLUDED.personas_80_mas,
+                        personas_no_edad = EXCLUDED.personas_no_edad,
+                        updated_at = NOW()
+                    RETURNING id::text, 1 as sync_version, updated_at;
+                """, clean_id, clean_loc_id, item.jefe_familia, item.id_sexo, item.id_idioma, item.direccion,
+                item.total_habitantes, item.personas_0_5, item.personas_6_11, item.personas_12_17,
+                item.personas_18_23, item.personas_24_34, item.personas_35_44, item.personas_45_59,
+                item.personas_60_69, item.personas_70_79, item.personas_80_mas, item.personas_no_edad)
+                if row:
+                    result["hogares"].append(SyncedItem(id=row['id'], sync_version=row['sync_version'], updated_at=row['updated_at']))
+
     return SyncResult(status="ok", synced=result)
+

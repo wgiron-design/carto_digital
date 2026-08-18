@@ -4,7 +4,8 @@ import '../../core/models/capa_geometrica.dart';
 import '../../core/models/jerarquia.dart';
 import '../../core/controllers/digitalizacion_controller.dart';
 import '../theme/app_theme.dart';
-import 'navegador_formulario_screen.dart';
+import 'local_lista_screen.dart';
+import 'hogar_lista_screen.dart';
 import '../widgets/dialogos_jerarquia.dart';
 
 class JerarquiaScreen extends StatefulWidget {
@@ -132,25 +133,20 @@ class _JerarquiaScreenState extends State<JerarquiaScreen> {
   // ─────────────────────────────────────────────────────────────────────────────
 
   Future<void> _addLocal(Nivel nivel) async {
-    final resultado = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (c) => DialogoNuevoLocal(localSugerido: nivel.locales.length + 1),
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (c) => LocalListaScreen(
+          nivelId: nivel.id,
+          numeroNivel: nivel.numeroNivel,
+          numeroLocalesEsperados: nivel.numeroLocales,
+        ),
+      ),
     );
-    if (resultado != null) {
-      final int numero = resultado['numero'];
-      final String usoActual = resultado['uso_actual'];
-      final String? ocupacion = resultado['ocupacion'];
-      final int? numeroHogares = resultado['numero_hogares'];
-      final local = Local.nuevo(
-        idNivel: nivel.id, 
-        nombre: 'Local $numero', 
-        usoActual: usoActual,
-        ocupacion: ocupacion,
-        numeroHogares: numeroHogares,
-      );
-      _updateNivel(nivel.copyWith(locales: [...nivel.locales, local]));
-    }
+    setState(() => _isDirty = true);
   }
+
+
 
   void _deleteLocal(Nivel nivel, String idLocal) {
     final list = List<Local>.from(nivel.locales)..removeWhere((l) => l.id == idLocal);
@@ -162,23 +158,18 @@ class _JerarquiaScreenState extends State<JerarquiaScreen> {
   // ─────────────────────────────────────────────────────────────────────────────
 
   Future<void> _addHogar(Nivel nivel, Local local) async {
-    final Map<String, dynamic>? resultado = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (c) => DialogoNuevoHogar(hogarSugerido: local.hogares.length + 1),
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (c) => HogarListaScreen(
+          localId: local.id,
+          nombreLocal: local.nombre ?? 'Local',
+          numeroNivel: nivel.numeroNivel,
+          numeroHogaresEsperados: local.numeroHogares ?? 1,
+        ),
+      ),
     );
-    if (resultado != null) {
-      final int numero = resultado['numero'];
-      final String jefeFamilia = resultado['jefe_familia'];
-      final String? sexoJefe = resultado['sexo_jefe'];
-      
-      final hogar = Hogar.nuevo(
-        idLocal: local.id, 
-        jefeFamilia: jefeFamilia,
-        sexoJefe: sexoJefe,
-      );
-      final newLocal = local.copyWith(hogares: [...local.hogares, hogar]);
-      _updateLocal(nivel, newLocal);
-    }
+    setState(() {});
   }
 
   void _deleteHogar(Nivel nivel, Local local, String idHogar) {
@@ -211,28 +202,12 @@ class _JerarquiaScreenState extends State<JerarquiaScreen> {
     }
   }
 
-  Future<void> _abrirNavegador({
-    required TipoJerarquia tipo,
-    required int nivelIndex,
-    int? localIndex,
-    int? hogarIndex,
-  }) async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => NavegadorFormularioScreen(
-          punto: _punto,
-          tipo: tipo,
-          nivelIndex: nivelIndex,
-          localIndex: localIndex,
-          hogarIndex: hogarIndex,
-          onGuardar: (PuntoEstructura updated) {
-            setState(() {
-              _punto = updated;
-              _isDirty = true;
-            });
-          },
-        ),
+  // _abrirNavegador fue descartado para usar la navegación jerárquica en los forms independientes.
+  void _mostrarAvisoEdicionIndependiente() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Por favor, ingresa a la lista (ícono al lado) o crea un nuevo registro para usar el formulario independiente.'),
+        backgroundColor: Colors.orangeAccent,
       ),
     );
   }
@@ -334,10 +309,7 @@ class _JerarquiaScreenState extends State<JerarquiaScreen> {
             IconButton(
               icon: const Icon(Icons.edit, color: AppTheme.primary),
               tooltip: 'Editar Nivel',
-              onPressed: () => _abrirNavegador(
-                tipo: TipoJerarquia.nivel,
-                nivelIndex: nivelIndex,
-              ),
+              onPressed: _mostrarAvisoEdicionIndependiente,
             ),
             IconButton(
               icon: const Icon(Icons.add_business, color: AppTheme.secondary),
@@ -372,7 +344,8 @@ class _JerarquiaScreenState extends State<JerarquiaScreen> {
           children: [
             const Icon(Icons.storefront, color: AppTheme.secondary, size: 18),
             const SizedBox(width: 8),
-            Text(local.nombre, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+            Text(local.nombre ?? 'Local', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+
             if (local.numeroHogares != null && local.numeroHogares != local.hogares.length && 
                 (local.ocupacion?.contains('habitantes presentes') == true || local.ocupacion?.contains('habitantes ausentes') == true)) ...[
               const SizedBox(width: 8),
@@ -390,11 +363,7 @@ class _JerarquiaScreenState extends State<JerarquiaScreen> {
             IconButton(
               icon: const Icon(Icons.edit, color: AppTheme.secondary, size: 18),
               tooltip: 'Editar Local',
-              onPressed: () => _abrirNavegador(
-                tipo: TipoJerarquia.local,
-                nivelIndex: nivelIndex,
-                localIndex: localIndex,
-              ),
+              onPressed: _mostrarAvisoEdicionIndependiente,
             ),
             IconButton(
               icon: const Icon(Icons.group_add, color: AppTheme.tertiary, size: 18),
@@ -428,12 +397,7 @@ class _JerarquiaScreenState extends State<JerarquiaScreen> {
           const SizedBox(width: 8),
           Expanded(child: Text(hogar.jefeFamilia, style: const TextStyle(fontSize: 13))),
           InkWell(
-            onTap: () => _abrirNavegador(
-              tipo: TipoJerarquia.hogar,
-              nivelIndex: nivelIndex,
-              localIndex: localIndex,
-              hogarIndex: hogarIndex,
-            ),
+            onTap: _mostrarAvisoEdicionIndependiente,
             child: const Padding(
               padding: EdgeInsets.all(4.0),
               child: Icon(Icons.edit, color: AppTheme.tertiary, size: 16),

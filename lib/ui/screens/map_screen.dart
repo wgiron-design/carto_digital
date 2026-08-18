@@ -1369,9 +1369,9 @@ class _MapScreenState extends State<MapScreen> {
 
             // ── BOTONES DE ACCIÓN PARA EL PUNTO SELECCIONADO ────────────────
             Builder(builder: (context) {
-              final auth = Provider.of<AuthProvider>(context, listen: false);
+              final auth = Provider.of<AuthController>(context, listen: false);
               final esPropietario = (punto.createdBy == null) ||
-                  (auth.currentUserId != null && str(punto.createdBy) == str(auth.currentUserId));
+                  (auth.currentUserId != null && punto.createdBy.toString() == auth.currentUserId.toString());
 
               return Column(
                 children: [
@@ -1407,7 +1407,12 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                           onPressed: () async {
                             if (!esPropietario) {
-                              mostrarMensajeNoPropietario();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('⚠️ Solo el creador puede editar este elemento'),
+                                  backgroundColor: AppTheme.warning,
+                                ),
+                              );
                               return;
                             }
                             Navigator.pop(context);
@@ -1447,65 +1452,40 @@ class _MapScreenState extends State<MapScreen> {
                                 nivelesCantidad: result.nivelesCantidad,
                                 notas: result.notas,
                                 niveles: punto.niveles,
+                                fechaCreacion: punto.fechaCreacion,
                                 updatedAt: DateTime.now(),
                                 syncDirty: true,
+                                createdBy: punto.createdBy,
+                                updatedBy: auth.currentUserId,
+                                deviceId: punto.deviceId,
+                                syncVersion: punto.syncVersion,
                               );
                               digCtrl.actualizarPunto(puntoEditado);
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text('✅ Estructura "${result.nombre}" actualizada'),
+                                  content: Text('✅ Estructura "${result.nombre}" actualizada. Abriendo niveles...'),
                                   backgroundColor: AppTheme.success,
                                 ),
                               );
+
+                              // Navegar a NivelListaScreen tras guardar edición
+                              if (mounted) {
+                                await Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => NivelListaScreen(puntoEstructura: puntoEditado),
+                                  ),
+                                );
+                              }
                             }
                           },
                         ),
                       ),
-                      ],
-                    ),
-                  ],
-                );
-              }),
-            ]
-            else
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.info_outline, size: 16),
-                  label: const Text('Ver Atributos', style: TextStyle(fontSize: 12)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppTheme.onSurface,
+                    ],
                   ),
-                  onPressed: () async {
-                    Navigator.pop(context);
-                    await showDialog<AtributosPuntoResult>(
-                      context: context,
-                      builder: (_) => DialogoAtributosPunto(
-                        lat: punto.coordenadas.latitude,
-                        lng: punto.coordenadas.longitude,
-                        baseUrl: PostGISService().baseUrl,
-                        tipos: _tiposCatalogo,
-                        nombreInicial: punto.nombre,
-                        idCategoriaInicial: punto.idCategoria,
-                        idTipoInicial: punto.idTipo,
-                        estadoInicial: punto.estado,
-                        nivelesInicial: punto.nivelesCantidad,
-                        notasIniciales: punto.notas,
-                        soloLectura: true,
-                        onAbrirNiveles: () async {
-                          Navigator.pop(context);
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => NivelListaScreen(puntoEstructura: punto),
-                            ),
-                          );
-                        },
-                      ),
-                    );
-                  },
-                ),
-              ),
+                ],
+              );
+            }),
           ],
         ),
       ),

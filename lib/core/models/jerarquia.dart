@@ -116,41 +116,60 @@ class Nivel {
 class Local {
   final String id;
   final String idNivel;
-  final String nombre;
-  final String usoActual;
-  final String? ocupacion;
+  final String? nombre;
+  final int idTipo;
+  final int? idCondicionLocal;
+  final String? nombreTipo;
+  final String? nombreCondicion;
   final int? numeroHogares;
+  final String? descripcion;
   final DateTime updatedAt;
   final bool syncDirty;
   final List<Hogar> hogares;
 
+  // Getters de compatibilidad retroactiva
+  String get usoActual => nombreTipo ?? 'Tipo #$idTipo';
+  String? get ocupacion => nombreCondicion;
+
   Local({
     required this.id,
     required this.idNivel,
-    required this.nombre,
-    required this.usoActual,
-    this.ocupacion,
+    this.nombre,
+    this.idTipo = 1,
+    this.idCondicionLocal,
+    this.nombreTipo,
+    this.nombreCondicion,
     this.numeroHogares,
+    this.descripcion,
     DateTime? updatedAt,
     this.syncDirty = true,
     List<Hogar>? hogares,
+    String? usoActual,
+    String? ocupacion,
   })  : updatedAt = updatedAt ?? DateTime.now(),
         hogares = hogares ?? [];
 
+
   factory Local.nuevo({
     required String idNivel,
-    required String nombre,
-    required String usoActual,
-    String? ocupacion,
+    String? nombre,
+    required int idTipo,
+    int? idCondicionLocal,
+    String? nombreTipo,
+    String? nombreCondicion,
     int? numeroHogares,
+    String? descripcion,
   }) {
     return Local(
       id: _uuid.v4(),
       idNivel: idNivel,
       nombre: nombre,
-      usoActual: usoActual,
-      ocupacion: ocupacion,
+      idTipo: idTipo,
+      idCondicionLocal: idCondicionLocal,
+      nombreTipo: nombreTipo,
+      nombreCondicion: nombreCondicion,
       numeroHogares: numeroHogares,
+      descripcion: descripcion,
       syncDirty: true,
     );
   }
@@ -158,10 +177,13 @@ class Local {
   Map<String, dynamic> toJson() => {
         'id': id,
         'id_nivel': idNivel,
-        'nombre': nombre,
-        'uso_actual': usoActual,
-        'ocupacion': ocupacion,
+        'nombre_local': nombre,
+        'id_tipo': idTipo,
+        'id_condicion_local': idCondicionLocal,
+        'nombre_tipo': nombreTipo,
+        'nombre_condicion': nombreCondicion,
         'numero_hogares': numeroHogares,
+        'descripcion': descripcion,
         'updated_at': updatedAt.toIso8601String(),
         'sync_dirty': syncDirty ? 1 : 0,
         'hogares': hogares.map((h) => h.toJson()).toList(),
@@ -169,11 +191,14 @@ class Local {
 
   factory Local.fromJson(Map<String, dynamic> json) => Local(
         id: json['id'] as String,
-        idNivel: json['id_nivel'] as String,
-        nombre: json['nombre'] as String? ?? '',
-        usoActual: json['uso_actual'] as String? ?? '',
-        ocupacion: json['ocupacion'] as String?,
+        idNivel: (json['id_nivel'] ?? json['nivel_id'] ?? '') as String,
+        nombre: (json['nombre_local'] ?? json['nombre']) as String?,
+        idTipo: (json['id_tipo'] as num?)?.toInt() ?? 1,
+        idCondicionLocal: json['id_condicion_local'] != null ? (json['id_condicion_local'] as num).toInt() : null,
+        nombreTipo: json['nombre_tipo'] as String?,
+        nombreCondicion: json['nombre_condicion'] as String?,
         numeroHogares: json['numero_hogares'] != null ? (json['numero_hogares'] as num).toInt() : null,
+        descripcion: json['descripcion'] as String?,
         updatedAt: json['updated_at'] != null ? DateTime.parse(json['updated_at'] as String) : DateTime.now(),
         syncDirty: json['sync_dirty'] == 1 || json['sync_dirty'] == true,
         hogares: (json['hogares'] as List? ?? [])
@@ -185,22 +210,35 @@ class Local {
     return {
       'id': id,
       'nivel_id': idNivel,
-      'nombre': nombre,
-      'uso_actual': usoActual,
-      'ocupacion': ocupacion,
+      'nombre_local': nombre,
+      'id_tipo': idTipo,
+      'id_condicion_local': idCondicionLocal,
       'numero_hogares': numeroHogares,
+      'descripcion': descripcion,
       'updated_at': updatedAt.toIso8601String(),
       'sync_dirty': syncDirty ? 1 : 0,
     };
   }
 
-  Local copyWith({String? nombre, String? usoActual, String? ocupacion, int? numeroHogares, List<Hogar>? hogares}) => Local(
+  Local copyWith({
+    String? nombre,
+    int? idTipo,
+    int? idCondicionLocal,
+    String? nombreTipo,
+    String? nombreCondicion,
+    int? numeroHogares,
+    String? descripcion,
+    List<Hogar>? hogares,
+  }) => Local(
         id: id,
         idNivel: idNivel,
         nombre: nombre ?? this.nombre,
-        usoActual: usoActual ?? this.usoActual,
-        ocupacion: ocupacion ?? this.ocupacion,
+        idTipo: idTipo ?? this.idTipo,
+        idCondicionLocal: idCondicionLocal ?? this.idCondicionLocal,
+        nombreTipo: nombreTipo ?? this.nombreTipo,
+        nombreCondicion: nombreCondicion ?? this.nombreCondicion,
         numeroHogares: numeroHogares ?? this.numeroHogares,
+        descripcion: descripcion ?? this.descripcion,
         updatedAt: DateTime.now(),
         syncDirty: true,
         hogares: hogares ?? this.hogares,
@@ -209,8 +247,9 @@ class Local {
   int get totalHogares => hogares.length;
 
   @override
-  String toString() => 'Local $nombre ($totalHogares hogares)';
+  String toString() => 'Local ${nombre ?? id} ($totalHogares hogares)';
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -219,8 +258,11 @@ class Hogar {
   final String id;
   final String idLocal;
   final String jefeFamilia;
-  final String? sexoJefe;
-  final String? idioma;
+  final int? idSexo;
+  final int? idIdioma;
+  final String? nombreSexo;
+  final String? nombreIdioma;
+  final String? direccion;
   final int? totalHabitantes;
   final int? personas_0_5;
   final int? personas_6_11;
@@ -236,12 +278,19 @@ class Hogar {
   final DateTime updatedAt;
   final bool syncDirty;
 
+  // Getters de compatibilidad retroactiva
+  String? get sexoJefe => nombreSexo ?? (idSexo == 1 ? 'Masculino' : idSexo == 2 ? 'Femenino' : null);
+  String? get idioma => nombreIdioma;
+
   Hogar({
     required this.id,
     required this.idLocal,
     required this.jefeFamilia,
-    this.sexoJefe,
-    this.idioma,
+    this.idSexo,
+    this.idIdioma,
+    this.nombreSexo,
+    this.nombreIdioma,
+    this.direccion,
     this.totalHabitantes,
     this.personas_0_5,
     this.personas_6_11,
@@ -261,23 +310,31 @@ class Hogar {
   factory Hogar.nuevo({
     required String idLocal,
     required String jefeFamilia,
-    String? sexoJefe,
+    int? idSexo,
+    int? idIdioma,
+    String? direccion,
   }) {
     return Hogar(
       id: _uuid.v4(),
       idLocal: idLocal,
       jefeFamilia: jefeFamilia,
-      sexoJefe: sexoJefe,
+      idSexo: idSexo,
+      idIdioma: idIdioma,
+      direccion: direccion,
       syncDirty: true,
     );
   }
 
   Map<String, dynamic> toJson() => {
         'id': id,
+        'local_id': idLocal,
         'id_local': idLocal,
         'jefe_familia': jefeFamilia,
-        'sexo_jefe': sexoJefe,
-        'idioma': idioma,
+        'id_sexo': idSexo,
+        'id_idioma': idIdioma,
+        'nombre_sexo': nombreSexo,
+        'nombre_idioma': nombreIdioma,
+        'direccion': direccion,
         'total_habitantes': totalHabitantes,
         'personas_0_5': personas_0_5,
         'personas_6_11': personas_6_11,
@@ -296,10 +353,13 @@ class Hogar {
 
   factory Hogar.fromJson(Map<String, dynamic> json) => Hogar(
         id: json['id'] as String,
-        idLocal: json['id_local'] as String,
+        idLocal: (json['local_id'] ?? json['id_local'] ?? '') as String,
         jefeFamilia: json['jefe_familia'] as String? ?? '',
-        sexoJefe: json['sexo_jefe'] as String?,
-        idioma: json['idioma'] as String?,
+        idSexo: json['id_sexo'] != null ? (json['id_sexo'] as num).toInt() : null,
+        idIdioma: json['id_idioma'] != null ? (json['id_idioma'] as num).toInt() : null,
+        nombreSexo: json['nombre_sexo'] as String?,
+        nombreIdioma: json['nombre_idioma'] as String?,
+        direccion: json['direccion'] as String?,
         totalHabitantes: json['total_habitantes'] != null ? (json['total_habitantes'] as num).toInt() : null,
         personas_0_5: json['personas_0_5'] != null ? (json['personas_0_5'] as num).toInt() : null,
         personas_6_11: json['personas_6_11'] != null ? (json['personas_6_11'] as num).toInt() : null,
@@ -321,8 +381,9 @@ class Hogar {
       'id': id,
       'local_id': idLocal,
       'jefe_familia': jefeFamilia,
-      'sexo_jefe': sexoJefe,
-      'idioma': idioma,
+      'id_sexo': idSexo,
+      'id_idioma': idIdioma,
+      'direccion': direccion,
       'total_habitantes': totalHabitantes,
       'personas_0_5': personas_0_5,
       'personas_6_11': personas_6_11,
@@ -342,8 +403,11 @@ class Hogar {
 
   Hogar copyWith({
     String? jefeFamilia,
-    String? sexoJefe,
-    String? idioma,
+    int? idSexo,
+    int? idIdioma,
+    String? nombreSexo,
+    String? nombreIdioma,
+    String? direccion,
     int? totalHabitantes,
     int? personas_0_5,
     int? personas_6_11,
@@ -361,8 +425,11 @@ class Hogar {
         id: id,
         idLocal: idLocal,
         jefeFamilia: jefeFamilia ?? this.jefeFamilia,
-        sexoJefe: sexoJefe ?? this.sexoJefe,
-        idioma: idioma ?? this.idioma,
+        idSexo: idSexo ?? this.idSexo,
+        idIdioma: idIdioma ?? this.idIdioma,
+        nombreSexo: nombreSexo ?? this.nombreSexo,
+        nombreIdioma: nombreIdioma ?? this.nombreIdioma,
+        direccion: direccion ?? this.direccion,
         totalHabitantes: totalHabitantes ?? this.totalHabitantes,
         personas_0_5: personas_0_5 ?? this.personas_0_5,
         personas_6_11: personas_6_11 ?? this.personas_6_11,
@@ -378,6 +445,7 @@ class Hogar {
         updatedAt: DateTime.now(),
         syncDirty: true,
       );
+
 
   @override
   String toString() => 'Hogar: $jefeFamilia';

@@ -41,7 +41,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       dbPath,
-      version: 5,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -79,6 +79,64 @@ class DatabaseHelper {
         await db.execute('ALTER TABLE $table ADD COLUMN created_by TEXT');
         await db.execute('ALTER TABLE $table ADD COLUMN updated_by TEXT');
         await db.execute('ALTER TABLE $table ADD COLUMN device_id TEXT');
+        await db.execute('ALTER TABLE $table ADD COLUMN sync_version INTEGER DEFAULT 0');
+        await db.execute('ALTER TABLE $table ADD COLUMN deleted_at TEXT');
+      }
+    }
+    if (oldVersion < 6) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS cat_estructuras_categoria (
+          id INTEGER PRIMARY KEY,
+          nombre TEXT NOT NULL,
+          descripcion TEXT
+        )
+      ''');
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS cat_estructuras_tipo (
+          id INTEGER PRIMARY KEY,
+          nombre TEXT NOT NULL,
+          id_categoria INTEGER,
+          descripcion TEXT,
+          FOREIGN KEY (id_categoria) REFERENCES cat_estructuras_categoria (id)
+        )
+      ''');
+      await db.execute('ALTER TABLE estructuras RENAME TO estructuras_old');
+      await db.execute('''
+        CREATE TABLE estructuras (
+          id TEXT PRIMARY KEY,
+          upm_id TEXT,
+          geom_wkt TEXT,
+          x REAL,
+          y REAL,
+          nombre TEXT,
+          notas TEXT,
+          id_categoria INTEGER DEFAULT 1,
+          id_tipo INTEGER DEFAULT 1,
+          estado TEXT,
+          niveles_cantidad INTEGER,
+          updated_at TEXT,
+          sync_dirty INTEGER DEFAULT 1,
+          created_by TEXT,
+          updated_by TEXT,
+          device_id TEXT,
+          sync_version INTEGER DEFAULT 0,
+          deleted_at TEXT,
+          FOREIGN KEY (upm_id) REFERENCES upm (id) ON DELETE CASCADE,
+          FOREIGN KEY (id_categoria) REFERENCES cat_estructuras_categoria (id),
+          FOREIGN KEY (id_tipo) REFERENCES cat_estructuras_tipo (id)
+        )
+      ''');
+      await db.execute('''
+        INSERT INTO estructuras (id, upm_id, geom_wkt, x, y, nombre, notas, id_categoria, id_tipo, estado, niveles_cantidad, updated_at, sync_dirty, created_by, updated_by, device_id, sync_version, deleted_at)
+        SELECT id, upm_id, geom_wkt, x, y, nombre, notas, 1, 1, estado, niveles_cantidad, updated_at, sync_dirty, created_by, updated_by, device_id, sync_version, deleted_at FROM estructuras_old
+      ''');
+      await db.execute('DROP TABLE estructuras_old');
+    }
+    if (oldVersion < 7) {
+      await db.execute('ALTER TABLE hogares ADD COLUMN id_sexo INTEGER');
+      await db.execute('ALTER TABLE hogares ADD COLUMN id_idioma INTEGER');
+      await db.execute('ALTER TABLE hogares ADD COLUMN direccion TEXT');
+      for (final table in ['niveles', 'locales', 'hogares']) {
         await db.execute('ALTER TABLE $table ADD COLUMN sync_version INTEGER DEFAULT 0');
         await db.execute('ALTER TABLE $table ADD COLUMN deleted_at TEXT');
       }
@@ -143,6 +201,24 @@ class DatabaseHelper {
     ''');
 
     await db.execute('''
+      CREATE TABLE IF NOT EXISTS cat_estructuras_categoria (
+        id INTEGER PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        descripcion TEXT
+      )
+    ''');
+    
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS cat_estructuras_tipo (
+        id INTEGER PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        id_categoria INTEGER,
+        descripcion TEXT,
+        FOREIGN KEY (id_categoria) REFERENCES cat_estructuras_categoria (id)
+      )
+    ''');
+
+    await db.execute('''
       CREATE TABLE estructuras (
         id TEXT PRIMARY KEY,
         upm_id TEXT,
@@ -151,9 +227,8 @@ class DatabaseHelper {
         y REAL,
         nombre TEXT,
         notas TEXT,
-        categoria TEXT,
-        tipo_formal TEXT,
-        tipo_referencia TEXT,
+        id_categoria INTEGER NOT NULL DEFAULT 1,
+        id_tipo INTEGER NOT NULL DEFAULT 1,
         estado TEXT,
         niveles_cantidad INTEGER,
         updated_at TEXT,
@@ -163,7 +238,9 @@ class DatabaseHelper {
         device_id TEXT,
         sync_version INTEGER DEFAULT 0,
         deleted_at TEXT,
-        FOREIGN KEY (upm_id) REFERENCES upm (id) ON DELETE CASCADE
+        FOREIGN KEY (upm_id) REFERENCES upm (id) ON DELETE CASCADE,
+        FOREIGN KEY (id_categoria) REFERENCES cat_estructuras_categoria (id),
+        FOREIGN KEY (id_tipo) REFERENCES cat_estructuras_tipo (id)
       )
     ''');
     
@@ -372,8 +449,9 @@ class DatabaseHelper {
         id: hMap['id'] as String,
         idLocal: hMap['local_id'] as String,
         jefeFamilia: hMap['jefe_familia'] as String? ?? '',
-        sexoJefe: hMap['sexo_jefe'] as String?,
-        idioma: hMap['idioma'] as String?,
+        idSexo: hMap['id_sexo'] != null ? (hMap['id_sexo'] as num).toInt() : null,
+        idIdioma: hMap['id_idioma'] != null ? (hMap['id_idioma'] as num).toInt() : null,
+        direccion: hMap['direccion'] as String?,
         totalHabitantes: hMap['total_habitantes'] != null ? (hMap['total_habitantes'] as num).toInt() : null,
         personas_0_5: hMap['personas_0_5'] != null ? (hMap['personas_0_5'] as num).toInt() : null,
         personas_6_11: hMap['personas_6_11'] != null ? (hMap['personas_6_11'] as num).toInt() : null,
@@ -391,17 +469,18 @@ class DatabaseHelper {
       );
       hogaresPorLocal.putIfAbsent(hogar.idLocal, () => []).add(hogar);
     }
-
     // Mapear Locales por Nivel
     final Map<String, List<Local>> localesPorNivel = {};
     for (var lMap in localesMaps) {
+
       final local = Local(
         id: lMap['id'] as String,
         idNivel: lMap['nivel_id'] as String,
-        nombre: lMap['nombre'] as String? ?? '',
-        usoActual: lMap['uso_actual'] as String? ?? '',
-        ocupacion: lMap['ocupacion'] as String?,
+        nombre: (lMap['nombre_local'] ?? lMap['nombre']) as String?,
+        idTipo: (lMap['id_tipo'] as num?)?.toInt() ?? 1,
+        idCondicionLocal: lMap['id_condicion_local'] != null ? (lMap['id_condicion_local'] as num).toInt() : null,
         numeroHogares: lMap['numero_hogares'] != null ? (lMap['numero_hogares'] as num).toInt() : null,
+        descripcion: lMap['descripcion'] as String?,
         updatedAt: DateTime.parse(lMap['updated_at'] as String),
         syncDirty: lMap['sync_dirty'] == 1,
         hogares: hogaresPorLocal[lMap['id']] ?? [],
@@ -434,16 +513,10 @@ class DatabaseHelper {
           estMap['x'] as double,
         ),
         nombre: estMap['nombre'] as String? ?? '',
-        categoria: CategoriaEstructura.values.firstWhere(
-          (e) => e.name == estMap['categoria'],
-          orElse: () => CategoriaEstructura.formal,
-        ),
-        tipoFormal: estMap['tipo_formal'] != null 
-          ? TipoEstructuraFormal.values.firstWhere((e) => e.name == estMap['tipo_formal'], orElse: () => TipoEstructuraFormal.vivienda)
-          : null,
-        tipoReferencia: estMap['tipo_referencia'] != null
-          ? TipoEstructuraReferencia.values.firstWhere((e) => e.name == estMap['tipo_referencia'], orElse: () => TipoEstructuraReferencia.puente)
-          : null,
+        idCategoria: (estMap['id_categoria'] as num?)?.toInt() ?? 1,
+        idTipo: (estMap['id_tipo'] as num?)?.toInt() ?? 1,
+        nombreCategoria: estMap['nombre_categoria'] as String?,
+        nombreTipo: estMap['nombre_tipo'] as String?,
         estado: EstadoEstructura.values.firstWhere(
           (e) => e.name == estMap['estado'],
           orElse: () => EstadoEstructura.presente,

@@ -447,3 +447,48 @@ async def get_catalogos_categorias(
             )
         return [dict(r) for r in rows]
 
+
+@router.get("/catalogos/locales/tipos")
+async def get_catalogos_locales_tipos():
+    """Retorna los tipos de locales disponibles."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, nombre FROM cat_locales_tipo ORDER BY id ASC;"
+        )
+        return [dict(r) for r in rows]
+
+
+@router.get("/catalogos/locales/condiciones")
+async def get_catalogos_locales_condiciones():
+    """Retorna las condiciones de los locales."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, nombre FROM cat_locales_condicion ORDER BY id ASC;"
+        )
+        return [dict(r) for r in rows]
+
+
+@router.get("/catalogos/hogares/idiomas")
+async def get_catalogos_hogares_idiomas():
+    """Retorna el catálogo de idiomas para hogares."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, nombre FROM cat_hogares_idioma ORDER BY id ASC;"
+        )
+        return [dict(r) for r in rows]
+
+
+@router.get("/catalogos/hogares/sexo")
+async def get_catalogos_hogares_sexo():
+    """Retorna el catálogo de sexo."""
+    pool = await get_db_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, nombre FROM cat_sexo ORDER BY id ASC;"
+        )
+        return [dict(r) for r in rows]
+
+

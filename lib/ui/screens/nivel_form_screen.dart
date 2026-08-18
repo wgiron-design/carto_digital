@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 import '../widgets/breadcrumb_bar.dart';
 import '../../core/services/nivel_service.dart';
+import '../../core/models/jerarquia.dart';
+import '../../core/services/jerarquia_navigator_service.dart';
+import 'local_lista_screen.dart';
 
 class NivelFormScreen extends StatefulWidget {
   final String estructuraId;
@@ -48,8 +51,8 @@ class _NivelFormScreenState extends State<NivelFormScreen> {
     super.dispose();
   }
 
-  Future<void> _guardar() async {
-    if (!_formKey.currentState!.validate()) return;
+  Future<Nivel?> _guardarDatos() async {
+    if (!_formKey.currentState!.validate()) return null;
 
     setState(() {
       _isSaving = true;
@@ -57,31 +60,23 @@ class _NivelFormScreenState extends State<NivelFormScreen> {
     });
 
     try {
+      Nivel nivelToReturn;
       if (widget.nivelExistente == null) {
-        // Crear
-        await NivelService().crearNivel(
+        nivelToReturn = await NivelService().crearNivel(
           widget.estructuraId,
           numeroLocales: _numeroLocales,
           descripcion: _descripcionCtrl.text.trim().isEmpty ? null : _descripcionCtrl.text.trim(),
         );
       } else {
-        // Editar
-        await NivelService().editarNivel(
+        nivelToReturn = await NivelService().editarNivel(
           widget.nivelExistente!.id,
           numeroLocales: _numeroLocales,
           descripcion: _descripcionCtrl.text.trim().isEmpty ? null : _descripcionCtrl.text.trim(),
         );
       }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Nivel guardado correctamente'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
-        Navigator.pop(context, true);
-      }
+      if (mounted) setState(() => _isSaving = false);
+      return nivelToReturn;
     } on NivelApiException catch (e) {
       if (e.code == 'perdida_de_datos_local') {
         setState(() {
@@ -90,42 +85,60 @@ class _NivelFormScreenState extends State<NivelFormScreen> {
       } else {
         _mostrarErrorSnackBar(e.message);
       }
+      if (mounted) setState(() => _isSaving = false);
+      return null;
     } catch (e) {
       _mostrarErrorSnackBar('No se pudo guardar el nivel. Revisa la conexión.');
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
+      if (mounted) setState(() => _isSaving = false);
+      return null;
+    }
+  }
+
+  Future<void> _guardar() async {
+    final nivel = await _guardarDatos();
+    if (nivel != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Nivel guardado correctamente'),
+          backgroundColor: AppTheme.success,
+        ),
+      );
+      Navigator.pop(context, widget.nivelExistente == null ? nivel : true);
+    }
+  }
+
+  Future<Nivel?> _confirmarEliminacionDatos() async {
+    if (widget.nivelExistente == null || _conflictData == null) return null;
+
+    setState(() => _isSaving = true);
+    try {
+      final nivel = await NivelService().confirmarEliminacionLocales(
+        widget.nivelExistente!.id,
+        _numeroLocales,
+      );
+      if (mounted) setState(() => _isSaving = false);
+      return nivel;
+    } on NivelApiException catch (e) {
+      _mostrarErrorSnackBar(e.message);
+      if (mounted) setState(() => _isSaving = false);
+      return null;
+    } catch (e) {
+      _mostrarErrorSnackBar('Error de conexión al eliminar locales excedentes');
+      if (mounted) setState(() => _isSaving = false);
+      return null;
     }
   }
 
   Future<void> _confirmarEliminacionYGuardar() async {
-    if (widget.nivelExistente == null || _conflictData == null) return;
-
-    setState(() => _isSaving = true);
-    try {
-      await NivelService().confirmarEliminacionLocales(
-        widget.nivelExistente!.id,
-        _numeroLocales,
+    final nivel = await _confirmarEliminacionDatos();
+    if (nivel != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Locales actualizados correctamente'),
+          backgroundColor: AppTheme.success,
+        ),
       );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Locales actualizados correctamente'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
-        Navigator.pop(context, true);
-      }
-    } on NivelApiException catch (e) {
-      _mostrarErrorSnackBar(e.message);
-    } catch (e) {
-      _mostrarErrorSnackBar('Error de conexión al eliminar locales excedentes');
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
-      }
+      Navigator.pop(context, true);
     }
   }
 
@@ -297,6 +310,131 @@ class _NivelFormScreenState extends State<NivelFormScreen> {
                       ),
                     ),
 
+                    const Divider(color: Colors.white10, height: 24),
+
+                    // Tarjeta Resumen / Navegación a Locales de este Nivel
+                    Builder(
+                      builder: (context) {
+                        final esNuevo = widget.nivelExistente == null;
+                        final registrados = esNuevo ? 0 : widget.nivelExistente!.localesRegistrados;
+                        final esperados = _numeroLocales;
+                        final double progreso = esperados > 0 ? (registrados / esperados).clamp(0.0, 1.0) : 0;
+                        final bool esCompleto = registrados >= esperados && esperados > 0;
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 20),
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: AppTheme.surfaceVariant,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: esCompleto
+                                  ? Colors.greenAccent.withValues(alpha: 0.4)
+                                  : AppTheme.secondary.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    'Locales registrados',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  Text(
+                                    '$registrados de $esperados',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      color: esCompleto ? Colors.greenAccent : AppTheme.secondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: progreso,
+                                  minHeight: 6,
+                                  backgroundColor: Colors.white12,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    esCompleto ? Colors.greenAccent : AppTheme.secondary,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              InkWell(
+                                borderRadius: BorderRadius.circular(10),
+                                onTap: esNuevo
+                                    ? null
+                                    : () async {
+                                        await Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (c) => LocalListaScreen(
+                                              nivelId: widget.nivelExistente!.id,
+                                              numeroNivel: numeroMostrar,
+                                              numeroLocalesEsperados: _numeroLocales,
+                                            ),
+                                          ),
+                                        );
+                                        if (mounted) setState(() {});
+                                      },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                  decoration: BoxDecoration(
+                                    color: esNuevo ? AppTheme.surface.withValues(alpha: 0.5) : AppTheme.surface,
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: Colors.white24),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.storefront_outlined,
+                                            color: esNuevo
+                                                ? Colors.white38
+                                                : (esCompleto ? Colors.greenAccent : AppTheme.secondary),
+                                            size: 20,
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Text(
+                                            esNuevo
+                                                ? 'Guarda el nivel primero para registrar sus locales'
+                                                : (registrados > 0
+                                                    ? 'Ver locales de este nivel'
+                                                    : 'Aún no hay locales ingresados'),
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.w600,
+                                              fontSize: esNuevo ? 12 : 14,
+                                              color: esNuevo ? Colors.white38 : Colors.white,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      Icon(
+                                        Icons.chevron_right,
+                                        color: esNuevo ? Colors.white24 : Colors.white70,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+
                     // Banner de Advertencia de Pérdida de Datos (Conflicto 409)
                     if (_conflictData != null) ...[
                       Container(
@@ -381,21 +519,47 @@ class _NivelFormScreenState extends State<NivelFormScreen> {
               Expanded(
                 child: OutlinedButton(
                   onPressed: _isSaving ? null : () => Navigator.pop(context),
-                  child: const Text('Cancelar'),
+                  child: const Text('Anterior / Cancelar', style: TextStyle(fontSize: 12)),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               Expanded(
                 child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.surfaceVariant),
                   icon: _isSaving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF003731)),
-                        )
-                      : const Icon(Icons.check),
-                  label: Text(_isSaving ? 'Guardando...' : 'Guardar Cambios'),
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.save, size: 16),
+                  label: Text('Guardar', style: const TextStyle(fontSize: 12)),
                   onPressed: (_isSaving || _conflictData != null) ? null : _guardar,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.tertiary),
+                  icon: _isSaving
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.skip_next, size: 16),
+                  label: const Text('Continuar', style: TextStyle(fontSize: 12)),
+                  onPressed: _isSaving ? null : () async {
+                    Nivel? nivelToUse;
+                    if (_conflictData != null) {
+                      nivelToUse = await _confirmarEliminacionDatos();
+                    } else {
+                      nivelToUse = await _guardarDatos();
+                    }
+                    
+                    if (nivelToUse != null && mounted) {
+                      JerarquiaNavigatorService().navegarSiguienteDesdeNivel(
+                        context: context,
+                        estructuraId: widget.estructuraId,
+                        nombreEstructura: widget.nombreEstructura,
+                        nivelId: nivelToUse.id,
+                        numeroNivel: nivelToUse.numeroNivel,
+                        numeroLocalesEsperados: nivelToUse.numeroLocales,
+                      );
+                    }
+                  },
                 ),
               ),
             ],

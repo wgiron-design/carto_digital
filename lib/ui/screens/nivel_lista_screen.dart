@@ -4,8 +4,11 @@ import '../widgets/breadcrumb_bar.dart';
 import '../widgets/progress_strip.dart';
 import '../widgets/lista_jerarquica_card.dart';
 import '../../core/models/capa_geometrica.dart';
+import '../../core/models/jerarquia.dart';
 import '../../core/services/nivel_service.dart';
 import 'nivel_form_screen.dart';
+import 'local_lista_screen.dart';
+
 
 class NivelListaScreen extends StatefulWidget {
   final PuntoEstructura puntoEstructura;
@@ -51,10 +54,24 @@ class _NivelListaScreenState extends State<NivelListaScreen> {
     }
   }
 
+  Future<void> _abrirLocalesDeNivel(NivelResumen nivel) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LocalListaScreen(
+          nivelId: nivel.id,
+          numeroNivel: nivel.numero,
+          numeroLocalesEsperados: nivel.numeroLocales,
+        ),
+      ),
+    );
+    _cargarNiveles();
+  }
+
   Future<void> _abrirFormulario({NivelResumen? nivelExistente, required int indexActual}) async {
     if (_data == null) return;
 
-    final bool? recargar = await Navigator.push<bool>(
+    final resultado = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => NivelFormScreen(
@@ -68,10 +85,26 @@ class _NivelListaScreenState extends State<NivelListaScreen> {
       ),
     );
 
-    if (recargar == true) {
-      _cargarNiveles();
+    if (resultado != null) {
+      await _cargarNiveles();
+      if (resultado is Nivel && mounted) {
+        // Nivel recien creado -> Abrir la instancia de locales directamente
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => LocalListaScreen(
+              nivelId: resultado.id,
+              numeroNivel: resultado.numeroNivel,
+              numeroLocalesEsperados: resultado.numeroLocales,
+            ),
+          ),
+        );
+        _cargarNiveles();
+      }
     }
   }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -200,8 +233,9 @@ class _NivelListaScreenState extends State<NivelListaScreen> {
           return ListaJerarquicaCard(
             nivel: nivel,
             onEditar: () => _abrirFormulario(nivelExistente: nivel, indexActual: index),
-            onContinuar: () => _abrirFormulario(nivelExistente: nivel, indexActual: index),
+            onContinuar: () => _abrirLocalesDeNivel(nivel),
           );
+
         } else {
           // Banner de aviso de tope alcanzado al final de la lista
           return Container(

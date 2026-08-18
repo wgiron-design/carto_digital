@@ -14,36 +14,35 @@ import 'jerarquia.dart';
 //   PoligonoUPM      (georreferenciado)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Categoría principal de la estructura
-enum CategoriaEstructura { formal, referencia }
+/// Item genérico para catalogos (Categorías, Tipos, etc.)
+class CatalogoItem {
+  final int id;
+  final String nombre;
+  final int? idCategoria;
+  final String? descripcion;
 
-/// Tipos para estructura Formal
-enum TipoEstructuraFormal {
-  vivienda('Vivienda', '🏠'),
-  comercio('Comercio', '🏪'),
-  educacion('Centro educativo', '🏫'),
-  religioso('Recinto religioso', '⛪'),
-  fabrica('Fábrica', '🏭'),
-  servicio('Servicio', '🛎️'),
-  institucion('Institución', '🏛️');
+  const CatalogoItem({
+    required this.id,
+    required this.nombre,
+    this.idCategoria,
+    this.descripcion,
+  });
 
-  final String label;
-  final String emoji;
-  const TipoEstructuraFormal(this.label, this.emoji);
-}
+  factory CatalogoItem.fromJson(Map<String, dynamic> json) {
+    return CatalogoItem(
+      id: (json['id'] as num).toInt(),
+      nombre: json['nombre'] as String? ?? '',
+      idCategoria: json['id_categoria'] != null ? (json['id_categoria'] as num).toInt() : null,
+      descripcion: json['descripcion'] as String?,
+    );
+  }
 
-/// Tipos para estructura de Referencia Geográfica
-enum TipoEstructuraReferencia {
-  puente('Puente', '🌉'),
-  torreTelefonica('Torre telefónica', '🗼'),
-  parqueo('Parqueo', '🅿️'),
-  plazaPublica('Plaza pública', '⛲'),
-  parque('Parque', '🌲'),
-  monumento('Monumento', '🗿');
-
-  final String label;
-  final String emoji;
-  const TipoEstructuraReferencia(this.label, this.emoji);
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'nombre': nombre,
+        if (idCategoria != null) 'id_categoria': idCategoria,
+        if (descripcion != null) 'descripcion': descripcion,
+      };
 }
 
 /// Estado de la estructura
@@ -78,9 +77,10 @@ class PuntoEstructura {
   final String id;
   final LatLng coordenadas;
   final String nombre;
-  final CategoriaEstructura categoria;
-  final TipoEstructuraFormal? tipoFormal;
-  final TipoEstructuraReferencia? tipoReferencia;
+  final int idCategoria;
+  final int idTipo;
+  final String? nombreCategoria;
+  final String? nombreTipo;
   final EstadoEstructura estado;
   final int nivelesCantidad;
   final String notas;
@@ -89,18 +89,13 @@ class PuntoEstructura {
   final bool syncDirty;
 
   // ── Campos de Auditoría y Sincronización Offline ─────────────────────────
-  /// UUID del usuario que creó el registro (nullable — puede no estar autenticado offline)
   final String? createdBy;
-  /// UUID del último usuario que modificó el registro
   final String? updatedBy;
-  /// Identificador único del dispositivo móvil que digitalizó
   final String? deviceId;
-  /// Versión de sincronización para resolución de conflictos offline
   final int syncVersion;
-  /// Fecha de borrado lógico (soft-delete). Null = registro activo.
   final DateTime? deletedAt;
 
-  // Relación uno-a-muchos con Niveles (se puebla en Paso 4)
+  // Relación uno-a-muchos con Niveles
   final List<Nivel> niveles;
 
   // UUID generator global
@@ -110,9 +105,10 @@ class PuntoEstructura {
     required this.id,
     required this.coordenadas,
     required this.nombre,
-    required this.categoria,
-    this.tipoFormal,
-    this.tipoReferencia,
+    required this.idCategoria,
+    required this.idTipo,
+    this.nombreCategoria,
+    this.nombreTipo,
     this.estado = EstadoEstructura.presente,
     this.nivelesCantidad = 1,
     this.notas = '',
@@ -132,9 +128,10 @@ class PuntoEstructura {
   factory PuntoEstructura.nuevo({
     required LatLng coordenadas,
     required String nombre,
-    required CategoriaEstructura categoria,
-    TipoEstructuraFormal? tipoFormal,
-    TipoEstructuraReferencia? tipoReferencia,
+    required int idCategoria,
+    required int idTipo,
+    String? nombreCategoria,
+    String? nombreTipo,
     EstadoEstructura estado = EstadoEstructura.presente,
     int nivelesCantidad = 1,
     String notas = '',
@@ -145,9 +142,10 @@ class PuntoEstructura {
       id: _uuid.v4(),
       coordenadas: coordenadas,
       nombre: nombre,
-      categoria: categoria,
-      tipoFormal: tipoFormal,
-      tipoReferencia: tipoReferencia,
+      idCategoria: idCategoria,
+      idTipo: idTipo,
+      nombreCategoria: nombreCategoria,
+      nombreTipo: nombreTipo,
       estado: estado,
       nivelesCantidad: nivelesCantidad,
       notas: notas,
@@ -176,9 +174,8 @@ class PuntoEstructura {
       'y': coordenadas.latitude,
       'nombre': nombre,
       'notas': notas,
-      'categoria': categoria.name,
-      'tipo_formal': tipoFormal?.name,
-      'tipo_referencia': tipoReferencia?.name,
+      'id_categoria': idCategoria,
+      'id_tipo': idTipo,
       'estado': estado.name,
       'niveles_cantidad': nivelesCantidad,
       'updated_at': updatedAt.toIso8601String(),
@@ -192,33 +189,20 @@ class PuntoEstructura {
   }
 
   /// Helper para obtener el emoji correspondiente al tipo seleccionado
-  String get emojiActivo {
-    if (categoria == CategoriaEstructura.formal && tipoFormal != null) {
-      return tipoFormal!.emoji;
-    } else if (categoria == CategoriaEstructura.referencia && tipoReferencia != null) {
-      return tipoReferencia!.emoji;
-    }
-    return '📍';
-  }
+  String get emojiActivo => '📍';
   
   /// Helper para obtener el texto del tipo seleccionado
-  String get labelTipoActivo {
-    if (categoria == CategoriaEstructura.formal && tipoFormal != null) {
-      return tipoFormal!.label;
-    } else if (categoria == CategoriaEstructura.referencia && tipoReferencia != null) {
-      return tipoReferencia!.label;
-    }
-    return 'Desconocido';
-  }
+  String get labelTipoActivo => nombreTipo ?? 'Tipo #$idTipo';
 
   Map<String, dynamic> toJson() => {
         'id': id,
         'lat': coordenadas.latitude,
         'lng': coordenadas.longitude,
         'nombre': nombre,
-        'categoria': categoria.name,
-        'tipoFormal': tipoFormal?.name,
-        'tipoReferencia': tipoReferencia?.name,
+        'id_categoria': idCategoria,
+        'id_tipo': idTipo,
+        'nombre_categoria': nombreCategoria,
+        'nombre_tipo': nombreTipo,
         'estado': estado.name,
         'nivelesCantidad': nivelesCantidad,
         'notas': notas,
@@ -241,16 +225,10 @@ class PuntoEstructura {
         (json['lng'] as num).toDouble(),
       ),
       nombre: json['nombre'] as String,
-      categoria: CategoriaEstructura.values.firstWhere(
-        (e) => e.name == json['categoria'],
-        orElse: () => CategoriaEstructura.formal,
-      ),
-      tipoFormal: json['tipoFormal'] != null 
-        ? TipoEstructuraFormal.values.firstWhere((e) => e.name == json['tipoFormal'], orElse: () => TipoEstructuraFormal.vivienda)
-        : null,
-      tipoReferencia: json['tipoReferencia'] != null
-        ? TipoEstructuraReferencia.values.firstWhere((e) => e.name == json['tipoReferencia'], orElse: () => TipoEstructuraReferencia.puente)
-        : null,
+      idCategoria: (json['id_categoria'] as num?)?.toInt() ?? 1,
+      idTipo: (json['id_tipo'] as num?)?.toInt() ?? 1,
+      nombreCategoria: json['nombre_categoria'] as String?,
+      nombreTipo: json['nombre_tipo'] as String?,
       estado: EstadoEstructura.values.firstWhere(
         (e) => e.name == json['estado'],
         orElse: () => EstadoEstructura.presente,
@@ -280,9 +258,8 @@ class PuntoEstructura {
         },
         'properties': {
           'nombre': nombre,
-          'categoria': categoria.name,
-          'tipo_formal': tipoFormal?.name,
-          'tipo_referencia': tipoReferencia?.name,
+          'id_categoria': idCategoria,
+          'id_tipo': idTipo,
           'estado': estado.name,
           'niveles_cantidad': nivelesCantidad,
           'notas': notas,
@@ -301,16 +278,10 @@ class PuntoEstructura {
       id: feature['id'] as String,
       coordenadas: LatLng((coords[1] as num).toDouble(), (coords[0] as num).toDouble()),
       nombre: props['nombre'] as String? ?? '',
-      categoria: CategoriaEstructura.values.firstWhere(
-        (e) => e.name == props['categoria'],
-        orElse: () => CategoriaEstructura.formal,
-      ),
-      tipoFormal: props['tipo_formal'] != null
-          ? TipoEstructuraFormal.values.firstWhere((e) => e.name == props['tipo_formal'], orElse: () => TipoEstructuraFormal.vivienda)
-          : null,
-      tipoReferencia: props['tipo_referencia'] != null
-          ? TipoEstructuraReferencia.values.firstWhere((e) => e.name == props['tipo_referencia'], orElse: () => TipoEstructuraReferencia.puente)
-          : null,
+      idCategoria: (props['id_categoria'] as num?)?.toInt() ?? 1,
+      idTipo: (props['id_tipo'] as num?)?.toInt() ?? 1,
+      nombreCategoria: props['nombre_categoria'] as String?,
+      nombreTipo: props['nombre_tipo'] as String?,
       estado: EstadoEstructura.values.firstWhere(
         (e) => e.name == props['estado'],
         orElse: () => EstadoEstructura.presente,
@@ -329,9 +300,10 @@ class PuntoEstructura {
   PuntoEstructura copyWith({
     LatLng? coordenadas,
     String? nombre,
-    CategoriaEstructura? categoria,
-    TipoEstructuraFormal? tipoFormal,
-    TipoEstructuraReferencia? tipoReferencia,
+    int? idCategoria,
+    int? idTipo,
+    String? nombreCategoria,
+    String? nombreTipo,
     EstadoEstructura? estado,
     int? nivelesCantidad,
     String? notas,
@@ -342,9 +314,10 @@ class PuntoEstructura {
         id: id,
         coordenadas: coordenadas ?? this.coordenadas,
         nombre: nombre ?? this.nombre,
-        categoria: categoria ?? this.categoria,
-        tipoFormal: tipoFormal ?? this.tipoFormal,
-        tipoReferencia: tipoReferencia ?? this.tipoReferencia,
+        idCategoria: idCategoria ?? this.idCategoria,
+        idTipo: idTipo ?? this.idTipo,
+        nombreCategoria: nombreCategoria ?? this.nombreCategoria,
+        nombreTipo: nombreTipo ?? this.nombreTipo,
         estado: estado ?? this.estado,
         nivelesCantidad: nivelesCantidad ?? this.nivelesCantidad,
         notas: notas ?? this.notas,
